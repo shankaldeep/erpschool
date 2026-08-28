@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EduManage - School Management System</title>
-    <meta name="description" content="Comprehensive school management software featuring distinct panels for Admins, Teachers, Students, Parents, and Clerks." />
-    <meta property="og:title" content="My Google AI Studio App" />
-    <meta property="og:description" content="An application built with Google AI Studio." />
+    <meta name="description" content="Comprehensive school management software featuring distinct panels for Admins, Teachers, Students, and Clerks. Covers homework, test/exam results, fee management, and support ticketing." />
+    <meta property="og:title" content="EduManage - School Management System" />
+    <meta property="og:description" content="Comprehensive school management software featuring distinct panels for Admins, Teachers, Students, and Clerks. Covers homework, test/exam results, fee management, and support ticketing." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#4f46e5" />
@@ -16,10 +16,13 @@
   <body>
     <div id="root"></div>
     <script>
+      // Clean up any stale/broken service workers that could cause blank screens on public URL
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        });
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (let registration of registrations) {
+            registration.unregister();
+          }
+        }).catch(function() {});
       }
     </script>
     <script type="module" src="/src/main.tsx"></script>

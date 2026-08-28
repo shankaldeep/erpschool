@@ -8,6 +8,7 @@ import { StudentPanel } from './pages/StudentPanel';
 import { ClerkPanel } from './pages/ClerkPanel';
 import { MasterAdminPanel } from './pages/MasterAdminPanel';
 import { ParentPanel } from './pages/ParentPanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function AppContent() {
   const { currentUser, schools } = useStore();
@@ -16,12 +17,18 @@ function AppContent() {
     return <Login />;
   }
 
-  // Prevent rendering before school metadata is loaded from Firestore to avoid layout flicker
-  if (schools.length === 0) {
+  // If Master Admin, allow direct access even if schools are empty
+  if (schools.length === 0 && currentUser.role !== 'MASTER_ADMIN') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 space-y-3">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 space-y-3 p-4 text-center">
         <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-sm font-bold text-slate-500 tracking-wider uppercase">Loading Workspace...</p>
+        <p className="text-sm font-bold text-slate-600 tracking-wider uppercase">Loading Workspace...</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-4 text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline"
+        >
+          Taking too long? Click here to refresh
+        </button>
       </div>
     );
   }
@@ -55,8 +62,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <StoreProvider>
-      <AppContent />
-    </StoreProvider>
+    <ErrorBoundary>
+      <StoreProvider>
+        <AppContent />
+      </StoreProvider>
+    </ErrorBoundary>
   );
 }
+
