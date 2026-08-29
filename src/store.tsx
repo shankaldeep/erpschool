@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, Student, Teacher, ParentAccount, Homework, ExamMark, FeeRecord, Issue, Role, School, AttendanceRecord, NotificationLog, SessionRequest, AttendanceRequest } from './types';
-import { doc, setDoc, deleteDoc, updateDoc, onSnapshot, getDoc, collection, query, where } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, updateDoc, onSnapshot, getDoc, collection, query, where, writeBatch } from 'firebase/firestore';
 import { db } from './firebase';
 import { isSameSubject, normalizeSubject } from './utils/gradeHelper';
 
@@ -662,8 +662,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return Array.from(studentMap.values());
       });
 
-      for (const s of studentsWithMeta) {
-        await safeSetDoc(doc(db, 'students', s.id), s);
+      for (let i = 0; i < studentsWithMeta.length; i += 400) {
+        const chunk = studentsWithMeta.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(s => {
+          batch.set(doc(db, 'students', s.id), s, { merge: true });
+        });
+        await batch.commit();
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'students/import');
@@ -874,8 +879,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       setMarks(Array.from(currentMarksMap.values()));
 
-      const batchList = marksToPersist.map(mark => safeSetDoc(doc(db, 'marks', mark.id), mark));
-      await Promise.all(batchList);
+      // Write in chunks of 400 using writeBatch for high speed
+      for (let i = 0; i < marksToPersist.length; i += 400) {
+        const chunk = marksToPersist.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(mark => {
+          batch.set(doc(db, 'marks', mark.id), mark, { merge: true });
+        });
+        await batch.commit();
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'marks batch');
     }
@@ -963,8 +975,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const importFeeRecords = async (records: FeeRecord[]) => {
     try {
-      for (const r of records) {
-        await setDoc(doc(db, 'feeRecords', r.id), { ...r, schoolId: effectiveSchoolId });
+      const targetSchoolId = effectiveSchoolId || currentUser?.schoolId || '';
+      for (let i = 0; i < records.length; i += 400) {
+        const chunk = records.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(r => {
+          batch.set(doc(db, 'feeRecords', r.id), { ...r, schoolId: targetSchoolId }, { merge: true });
+        });
+        await batch.commit();
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'feeRecords/import');
