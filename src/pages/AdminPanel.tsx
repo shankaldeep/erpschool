@@ -27,7 +27,17 @@ import {
 } from 'lucide-react';
 import type { Student, Teacher, User, ExamMark } from '../types';
 import { StudentReportCard } from '../components/StudentReportCard';
-import { normalizeGrade, isSameGrade, getDefaultSubjectsForGrade, parseExamHeader, normalizeSubject, isSameSubject, isValidPhotoUrl } from '../utils/gradeHelper';
+import { 
+  normalizeGrade, 
+  isSameGrade, 
+  getDefaultSubjectsForGrade, 
+  parseExamHeader, 
+  normalizeSubject, 
+  isSameSubject, 
+  isValidPhotoUrl,
+  parseCSVContent,
+  cleanHeaderKey 
+} from '../utils/gradeHelper';
 
 // ERP modular components import
 import { StudentRegistration } from '../components/erp/StudentRegistration';
@@ -132,7 +142,7 @@ export function AdminPanel() {
   const classes = ['All', 'Nursery', 'L.K.G', 'U.K.G', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12'];
 
   const sortedStudentsToDisplay = [...students].reverse();
-  let filteredDirectoryStudents = sortedStudentsToDisplay.filter(s => {
+  const filteredDirectoryStudents = sortedStudentsToDisplay.filter(s => {
     const sPass = s.name.toLowerCase().includes(studentSearch.toLowerCase()) || 
                   (s.srNo && s.srNo.toLowerCase().includes(studentSearch.toLowerCase())) ||
                   (s.rollNo && String(s.rollNo).includes(studentSearch)) ||
@@ -140,10 +150,6 @@ export function AdminPanel() {
     const cPass = studentClassFilter === 'All' ? true : isSameGrade(s.grade, studentClassFilter);
     return sPass && cPass;
   });
-
-  if (studentSearch === '' && studentClassFilter === 'All') {
-    filteredDirectoryStudents = filteredDirectoryStudents.slice(0, 50);
-  }
 
   const handleAddTeacher = (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,10 +235,12 @@ export function AdminPanel() {
     for (const existing of students) {
       if (existing.isDeleted) continue;
 
-      // 1. Match by SR Number (if non-empty and not dummy)
+      // 1. Match by SR Number (only if non-empty, and not auto-generated dummy)
       if (
         incoming.srNo && 
         existing.srNo && 
+        incoming.srNo.trim() !== '' &&
+        !incoming.srNo.startsWith('SR-') &&
         incoming.srNo.trim().toLowerCase() === existing.srNo.trim().toLowerCase()
       ) {
         return { 
@@ -241,10 +249,12 @@ export function AdminPanel() {
         };
       }
 
-      // 2. Match by Admission Number (if non-empty and not dummy)
+      // 2. Match by Admission Number (if non-empty, and not auto-generated dummy)
       if (
         incoming.admissionNo && 
         existing.admissionNo && 
+        incoming.admissionNo.trim() !== '' &&
+        !incoming.admissionNo.startsWith('ADM-') &&
         incoming.admissionNo.trim().toLowerCase() === existing.admissionNo.trim().toLowerCase()
       ) {
         return { 
@@ -258,6 +268,7 @@ export function AdminPanel() {
         incoming.name && existing.name &&
         incoming.name.trim().toLowerCase() === existing.name.trim().toLowerCase() &&
         (incoming.fatherName || '').trim().toLowerCase() === (existing.fatherName || '').trim().toLowerCase() &&
+        (incoming.fatherName || '').trim() !== '' &&
         isSameGrade(incoming.grade, existing.grade)
       ) {
         return { 
@@ -285,6 +296,7 @@ export function AdminPanel() {
       if (
         isSameGrade(incoming.grade, existing.grade) &&
         incoming.rollNo && existing.rollNo &&
+        String(incoming.rollNo).trim() !== '' &&
         String(incoming.rollNo).trim() === String(existing.rollNo).trim() &&
         (incoming.academicSession || activeAcademicSession || '') === (existing.academicSession || activeAcademicSession || '')
       ) {
@@ -303,114 +315,193 @@ export function AdminPanel() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = event.target?.result as string;
-      const lines = text.split('\n').map(l => l.replace(/\r$/, '')).filter(l => l.trim().length > 0);
-      if (lines.length > 1) {
-        const parseLine = (line: string) => {
-          const result: string[] = [];
-          let inQuotes = false;
-          let current = '';
-          for (let i = 0; i < line.length; i++) {
-            const char = line[i];
-            if (char === '"') {
-              inQuotes = !inQuotes;
-            } else if (char === ',' && !inQuotes) {
-              result.push(current.trim());
-              current = '';
-            } else {
-              current += char;
+      if (!text || !text.trim()) {
+        alert('CSV फ़ाइल खाली है। (Selected CSV file is empty.)');
+        return;
+      }
+
+      const allRows = parseCSVContent(text);
+      if (allRows.length === 0) {
+        alert('CSV फ़ाइल में कोई मान्य डेटा नहीं मिला। (No valid rows found in CSV.)');
+        return;
+      }
+
+      // Detect if row 0 is a header row
+      const headerRow = allRows[0];
+      const cleanHeaders = headerRow.map(h => cleanHeaderKey(h));
+
+      const findHeaderIndex = (synonymList: string[]): number => {
+        // 1. Exact cleaned match
+        for (const syn of synonymList) {
+          const cleanSyn = cleanHeaderKey(syn);
+          const idx = cleanHeaders.findIndex(h => h === cleanSyn);
+          if (idx !== -1) return idx;
+        }
+        // 2. Substring match
+        for (const syn of synonymList) {
+          const cleanSyn = cleanHeaderKey(syn);
+          if (cleanSyn.length >= 3) {
+            const idx = cleanHeaders.findIndex(h => h.includes(cleanSyn));
+            if (idx !== -1) return idx;
+          }
+        }
+        return -1;
+      };
+
+      const nameIdx = findHeaderIndex(['name', 'studentname', 'student_name', 'fullname', 'candidate_name', 'student', 'छात्रकानाम', 'विद्यार्थीकानाम', 'विद्यार्थीनाम', 'छात्रनाम', 'नाम']);
+      const nameHindiIdx = findHeaderIndex(['studentnamehindi', 'namehindi', 'nameinhindi', 'हिंदीनाम', 'नामहिंदी']);
+      const gradeIdx = findHeaderIndex(['class', 'grade', 'std', 'standard', 'classname', 'classgrade', 'कक्षा', 'वर्ग']);
+      const rollIdx = findHeaderIndex(['rollno', 'roll_no', 'roll', 'examrollno', 'rollnumber', 'अनुक्रमांक', 'रोलनंबर', 'रोल']);
+      const srIdx = findHeaderIndex(['srno', 'sr_no', 'sr', 'serialno', 'serial_no', 'sno', 's_no', 'srnumber', 'scholarno', 'scholarnumber', 'एसआर', 'क्रमसंख्या', 'दाखिलापंजी', 'रजिस्ट्रारनंबर']);
+      const admIdx = findHeaderIndex(['admissionno', 'admission_no', 'admno', 'adm_no', 'admission', 'regno', 'registrationno', 'reg_no', 'प्रवेशक्रमांक', 'दाखिलाक्रमांक', 'दाखिलानंबर']);
+      const fatherIdx = findHeaderIndex(['father', 'fathername', 'fathersname', 'father_name', 'fathers_name', 'guardian', 'guardianname', 'पिताकानाम', 'पिता', 'अभिभावक']);
+      const motherIdx = findHeaderIndex(['mother', 'mothername', 'mothersname', 'mother_name', 'mothers_name', 'माताकानाम', 'माता']);
+      const genderIdx = findHeaderIndex(['gender', 'sex', 'लिंग']);
+      const dobIdx = findHeaderIndex(['dob', 'dateofbirth', 'birthdate', 'date_of_birth', 'जन्मतिथि', 'जन्मदिनांक']);
+      const mobileIdx = findHeaderIndex(['mobile', 'phone', 'contact', 'mobileno', 'mobile_no', 'phoneno', 'contactno', 'मोबाइल', 'फोन', 'मोबाइलनंबर', 'फोननंबर']);
+      const fatherMobileIdx = findHeaderIndex(['fathermobile', 'father_mobile', 'पिताकामोबाइल', 'पिताफोन']);
+      const motherMobileIdx = findHeaderIndex(['mothermobile', 'mother_mobile', 'माताकामोबाइल', 'माताफोन']);
+      const aadharIdx = findHeaderIndex(['aadhar', 'aadharno', 'aadhaar', 'uid', 'aadharnumber', 'आधार', 'आधारकार्ड', 'आधारनंबर']);
+      const emailIdx = findHeaderIndex(['email', 'emailid', 'ईमेल']);
+      const addressIdx = findHeaderIndex(['address', 'fulladdress', 'addr', 'permanentaddress', 'residentialaddress', 'पता', 'स्थाईपता', 'निवास']);
+      const sessionIdx = findHeaderIndex(['academicsession', 'session', 'academic_session', 'year', 'sessionyear', 'शैक्षणिकसत्र', 'सत्र']);
+      const streamIdx = findHeaderIndex(['stream', 'group', 'branch', 'faculty', 'संकाय', 'स्ट्रीम', 'ग्रुप']);
+      const sectionIdx = findHeaderIndex(['section', 'sec', 'वर्ग', 'सेक्शन']);
+      const prevClassIdx = findHeaderIndex(['previousclass', 'prevclass', 'prev_class', 'पिछलीकक्षा']);
+      const feeBalanceIdx = findHeaderIndex(['feebalance', 'fee_balance', 'dues', 'balance', 'previousdues', 'बकायाफीस', 'बकाया', 'शेषशुल्क']);
+      const photoIdx = findHeaderIndex(['photourl', 'photo', 'photolink', 'image', 'picture', 'docstudentphoto', 'studentphoto', 'फोटो']);
+
+      const hasRecognizedHeaders = nameIdx !== -1 || gradeIdx !== -1 || rollIdx !== -1 || srIdx !== -1 || admIdx !== -1 || fatherIdx !== -1;
+      const dataRows = hasRecognizedHeaders ? allRows.slice(1) : allRows;
+
+      const currentSession = activeAcademicSession || '2026-27';
+      const effectiveSchool = currentUser?.schoolId || '';
+      const newItems: NewImportItem[] = [];
+      const duplicateItems: DuplicateImportItem[] = [];
+
+      dataRows.forEach((row, rowIdx) => {
+        if (!row || row.length === 0 || row.every(c => !c.trim())) return;
+
+        // Resolve student name
+        let rawName = '';
+        if (nameIdx !== -1 && row[nameIdx]) {
+          rawName = row[nameIdx].trim();
+        } else if (!hasRecognizedHeaders) {
+          // Positional fallback for headerless CSV
+          rawName = (row[2] || row[1] || row[0] || '').trim();
+        } else {
+          // Search for any column that looks like a name
+          for (let i = 0; i < row.length; i++) {
+            if (row[i] && isNaN(Number(row[i])) && !row[i].toLowerCase().startsWith('class') && row[i].length >= 2) {
+              rawName = row[i].trim();
+              break;
             }
           }
-          result.push(current.trim());
-          return result;
-        };
+        }
+        if (!rawName) return;
 
-        const headerLine = parseLine(lines[0]);
-        const headerMap: Record<string, number> = {};
-        headerLine.forEach((h, idx) => {
-          const cleanH = h.toLowerCase().replace(/[^a-z0-9]/g, '');
-          headerMap[cleanH] = idx;
-        });
-
-        const getCol = (cols: string[], possibleKeys: string[], fallbackIdx?: number): string => {
-          for (const key of possibleKeys) {
-            const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (headerMap[cleanKey] !== undefined && cols[headerMap[cleanKey]] !== undefined) {
-              return cols[headerMap[cleanKey]].replace(/^"|"$/g, '').trim();
+        // Resolve Grade / Class
+        let rawGrade = '';
+        if (gradeIdx !== -1 && row[gradeIdx]) {
+          rawGrade = row[gradeIdx].trim();
+        } else if (!hasRecognizedHeaders && row[11]) {
+          rawGrade = row[11].trim();
+        } else {
+          // Search for a column with "Class" or standard grades
+          for (let i = 0; i < row.length; i++) {
+            const val = row[i].trim();
+            if (/^(class\s*\d+|nursery|lkg|ukg|kg|pg|\d+(st|nd|rd|th)?)$/i.test(val)) {
+              rawGrade = val;
+              break;
             }
           }
-          if (fallbackIdx !== undefined && cols[fallbackIdx] !== undefined) {
-            return cols[fallbackIdx].replace(/^"|"$/g, '').trim();
+        }
+        const normalizedGrade = normalizeGrade(rawGrade || 'Class 1');
+
+        // Resolve Academic Session
+        let studentSession = currentSession;
+        if (sessionIdx !== -1 && row[sessionIdx]) {
+          const sVal = row[sessionIdx].trim();
+          if (/\d{4}[-_/]\d{2,4}/.test(sVal) || sVal.toLowerCase().includes('20')) {
+            studentSession = sVal;
           }
-          return '';
+        }
+
+        // Resolve Roll No
+        let rawRoll = '';
+        if (rollIdx !== -1 && row[rollIdx]) {
+          rawRoll = row[rollIdx].trim();
+        } else {
+          rawRoll = String(rowIdx + 1);
+        }
+
+        // Resolve SR No and Admission No
+        const rawSr = (srIdx !== -1 && row[srIdx] ? row[srIdx].trim() : '') || `SR-${1000 + rowIdx + 1}`;
+        const rawAdm = (admIdx !== -1 && row[admIdx] ? row[admIdx].trim() : '') || `ADM-${5000 + rowIdx + 1}`;
+
+        // Resolve Stream
+        const rawStream = (streamIdx !== -1 && row[streamIdx] ? row[streamIdx].trim() : undefined) as any;
+
+        // Resolve Gender
+        let parsedGender: 'Male' | 'Female' | 'Other' = 'Male';
+        if (genderIdx !== -1 && row[genderIdx]) {
+          const gVal = row[genderIdx].toLowerCase().trim();
+          if (gVal.includes('f') || gVal.includes('female') || gVal.includes('महिला') || gVal.includes('बालिका') || gVal.includes('लड़की')) {
+            parsedGender = 'Female';
+          } else if (gVal.includes('other') || gVal.includes('अन्य')) {
+            parsedGender = 'Other';
+          }
+        }
+
+        // Resolve Photo URL
+        let photoUrl = '';
+        if (photoIdx !== -1 && row[photoIdx] && isValidPhotoUrl(row[photoIdx])) {
+          photoUrl = row[photoIdx].trim();
+        }
+
+        const tempStudentId = `s_${Date.now()}_${rowIdx}_${Math.random().toString().slice(2, 6)}`;
+
+        const parsedStudent: Student = {
+          role: 'STUDENT',
+          id: tempStudentId,
+          schoolId: effectiveSchool,
+          srNo: rawSr,
+          admissionNo: rawAdm,
+          name: rawName,
+          studentNameHindi: nameHindiIdx !== -1 && row[nameHindiIdx] ? row[nameHindiIdx].trim() : undefined,
+          gender: parsedGender,
+          fatherName: fatherIdx !== -1 && row[fatherIdx] ? row[fatherIdx].trim() : '',
+          motherName: motherIdx !== -1 && row[motherIdx] ? row[motherIdx].trim() : '',
+          dob: dobIdx !== -1 && row[dobIdx] ? row[dobIdx].trim() : '',
+          mobile: mobileIdx !== -1 && row[mobileIdx] ? row[mobileIdx].trim() : '',
+          fatherMobile: fatherMobileIdx !== -1 && row[fatherMobileIdx] ? row[fatherMobileIdx].trim() : undefined,
+          motherMobile: motherMobileIdx !== -1 && row[motherMobileIdx] ? row[motherMobileIdx].trim() : undefined,
+          aadhar: aadharIdx !== -1 && row[aadharIdx] ? row[aadharIdx].trim() : '',
+          email: emailIdx !== -1 && row[emailIdx] ? row[emailIdx].trim() : '',
+          address: addressIdx !== -1 && row[addressIdx] ? row[addressIdx].trim() : '',
+          grade: normalizedGrade,
+          section: sectionIdx !== -1 && row[sectionIdx] ? row[sectionIdx].trim() : undefined,
+          rollNo: rawRoll,
+          academicSession: studentSession,
+          previousClass: prevClassIdx !== -1 && row[prevClassIdx] ? row[prevClassIdx].trim() : undefined,
+          stream: rawStream,
+          password: 'password123',
+          feeBalance: feeBalanceIdx !== -1 && row[feeBalanceIdx] ? Number(row[feeBalanceIdx]) || 0 : 0,
+          photoUrl: photoUrl,
+          subjects: getDefaultSubjectsForGrade(normalizedGrade, rawStream),
+          isDeleted: false
         };
 
-        const currentSession = activeAcademicSession || '2025-26';
-        const newItems: NewImportItem[] = [];
-        const duplicateItems: DuplicateImportItem[] = [];
-
-        lines.slice(1).forEach((line, lineIdx) => {
-          if (!line.trim()) return;
-          const cols = parseLine(line);
-          if (cols.length < 2) return;
-
-          const rawName = getCol(cols, ['name', 'studentname', 'student_name', 'fullname', 'candidate_name'], 2) || (cols.length > 0 ? cols[0] : '');
-          if (!rawName) return;
-
-          const rawGrade = getCol(cols, ['class', 'grade', 'std', 'standard', 'classname'], 11) || (cols.length > 1 ? cols[1] : 'Class 1');
-          const normalizedGrade = normalizeGrade(rawGrade);
-
-          const rawSession = getCol(cols, ['academicsession', 'session', 'academic_session', 'year', 'sessionyear'], 13);
-          const studentSession = rawSession ? rawSession.trim() : currentSession;
-
-          const rawStream = getCol(cols, ['stream', 'group', 'branch', 'faculty'], 15);
-          const rawRoll = getCol(cols, ['rollno', 'roll_no', 'roll', 'examrollno', 'rollnumber'], 12) || String(lineIdx + 1);
-          const rawSr = getCol(cols, ['srno', 'sr_no', 'sr', 'serialno', 'srnumber'], 0) || `SR-${1000 + lineIdx + 1}`;
-          const rawAdm = getCol(cols, ['admissionno', 'admission_no', 'admno', 'adm_no', 'regno', 'registrationno'], 1) || `ADM-${5000 + lineIdx + 1}`;
-
-          const tempStudentId = `s_${Date.now()}_${lineIdx}_${Math.random().toString().slice(2, 6)}`;
-
-          const parsedStudent: Student = {
-            role: 'STUDENT',
-            id: tempStudentId,
-            schoolId: currentUser?.schoolId || '',
-            srNo: rawSr,
-            admissionNo: rawAdm,
-            name: rawName,
-            gender: (getCol(cols, ['gender', 'sex'], 3) as any) || 'Male',
-            fatherName: getCol(cols, ['father', 'fathername', 'fathersname', 'father_name'], 4),
-            motherName: getCol(cols, ['mother', 'mothername', 'mothersname', 'mother_name'], 5),
-            dob: getCol(cols, ['dob', 'dateofbirth', 'birthdate'], 6),
-            mobile: getCol(cols, ['mobile', 'phone', 'contact', 'mobileno', 'phoneno'], 7),
-            aadhar: getCol(cols, ['aadhar', 'aadharno', 'aadhaar', 'uid'], 8),
-            email: getCol(cols, ['email', 'emailid'], 9),
-            address: getCol(cols, ['address', 'fulladdress', 'addr'], 10),
-            grade: normalizedGrade,
-            rollNo: rawRoll,
-            academicSession: studentSession,
-            previousClass: getCol(cols, ['previousclass', 'prevclass', 'prev_class'], 14),
-            stream: rawStream as any,
-            password: getCol(cols, ['password', 'pwd'], 16) || 'password123',
-            feeBalance: Number(getCol(cols, ['feebalance', 'fee_balance', 'dues', 'balance'], 17) || 0),
-            photoUrl: (() => {
-              const rawP = getCol(cols, ['photourl', 'photo', 'photolink', 'image', 'picture', 'docstudentphoto', 'studentphoto']);
-              if (isValidPhotoUrl(rawP)) return rawP.trim();
-              if (cols[18] && isValidPhotoUrl(cols[18])) return cols[18].trim();
-              return '';
-            })(),
-            subjects: getDefaultSubjectsForGrade(normalizedGrade, rawStream),
-            isDeleted: false
-          };
-
-          // Extract all exam marks for this student row
-          const rowMarksMap = new Map<string, Omit<ExamMark, 'id' | 'date' | 'schoolId'>>();
-          
-          for (let i = 0; i < cols.length; i++) {
-            const colNameHeader = headerLine[i];
+        // Extract exam marks if subject/exam columns exist in header
+        const rowMarksMap = new Map<string, Omit<ExamMark, 'id' | 'date' | 'schoolId'>>();
+        if (hasRecognizedHeaders) {
+          for (let col = 0; col < row.length; col++) {
+            const colNameHeader = headerRow[col];
             if (!colNameHeader) continue;
             const parsedExam = parseExamHeader(colNameHeader);
             if (parsedExam && !parsedExam.isMax) {
-              const val = Number(cols[i]);
-              if (!isNaN(val) && cols[i] !== '') {
+              const val = Number(row[col]);
+              if (!isNaN(val) && row[col] !== '') {
                 const markKey = `${parsedExam.examType}:::${parsedExam.subject}`;
                 const existingMark: Omit<ExamMark, 'id' | 'date' | 'schoolId'> = rowMarksMap.get(markKey) || {
                   studentId: tempStudentId,
@@ -421,12 +512,11 @@ export function AdminPanel() {
                   maxMarks: (parsedExam.examType === 'Half-Yearly Test' || parsedExam.examType === 'Yearly Test') ? 10 : 90,
                 };
 
-                // Find if there is an explicit Max column
                 let explicitMax: number | undefined;
-                if (i + 1 < cols.length && headerLine[i + 1]) {
-                  const nextExam = parseExamHeader(headerLine[i + 1]);
+                if (col + 1 < row.length && headerRow[col + 1]) {
+                  const nextExam = parseExamHeader(headerRow[col + 1]);
                   if (nextExam && nextExam.isMax && isSameSubject(nextExam.subject, parsedExam.subject) && nextExam.isPractical === parsedExam.isPractical) {
-                    const parsedMax = Number(cols[i + 1]);
+                    const parsedMax = Number(row[col + 1]);
                     if (!isNaN(parsedMax) && parsedMax > 0) {
                       explicitMax = parsedMax;
                     }
@@ -447,81 +537,80 @@ export function AdminPanel() {
               }
             }
           }
-
-          const rowMarks: Omit<ExamMark, 'id' | 'date' | 'schoolId'>[] = Array.from(rowMarksMap.values());
-
-          // Check if this student matches any existing record
-          const duplicateMatch = findDuplicateStudentMatch(parsedStudent);
-          if (duplicateMatch) {
-            const existing = duplicateMatch.existing;
-            const existingId = existing.id;
-            
-            // Smart merge: preserve existing fields if incoming CSV fields are empty/blank
-            const mergedIncomingStudent: Student = {
-              ...existing,
-              ...parsedStudent,
-              id: existingId,
-              schoolId: existing.schoolId || parsedStudent.schoolId,
-              name: parsedStudent.name || existing.name,
-              grade: parsedStudent.grade || existing.grade,
-              srNo: parsedStudent.srNo || existing.srNo,
-              admissionNo: parsedStudent.admissionNo || existing.admissionNo,
-              fatherName: parsedStudent.fatherName || existing.fatherName,
-              motherName: parsedStudent.motherName || existing.motherName,
-              mobile: parsedStudent.mobile || existing.mobile,
-              address: parsedStudent.address || existing.address,
-              aadhar: parsedStudent.aadhar || existing.aadhar,
-              email: parsedStudent.email || existing.email,
-              gender: parsedStudent.gender || existing.gender,
-              dob: parsedStudent.dob || existing.dob,
-              rollNo: parsedStudent.rollNo || existing.rollNo,
-              academicSession: parsedStudent.academicSession || existing.academicSession,
-              stream: parsedStudent.stream || existing.stream,
-              previousClass: parsedStudent.previousClass || existing.previousClass,
-              feeBalance: parsedStudent.feeBalance !== undefined && !isNaN(parsedStudent.feeBalance) ? parsedStudent.feeBalance : existing.feeBalance,
-              subjects: parsedStudent.subjects && parsedStudent.subjects.length > 0 ? parsedStudent.subjects : (existing.subjects || getDefaultSubjectsForGrade(existing.grade)),
-              photoUrl: parsedStudent.photoUrl || (isValidPhotoUrl(existing.photoUrl) ? existing.photoUrl : (isValidPhotoUrl(existing.docStudentPhoto) ? existing.docStudentPhoto : '')) || '',
-              isDeleted: false
-            };
-
-            duplicateItems.push({
-              incomingStudent: mergedIncomingStudent,
-              existingStudent: existing,
-              marks: rowMarks.map(m => ({ ...m, studentId: existingId })),
-              matchReason: duplicateMatch.reason
-            });
-          } else {
-            newItems.push({
-              student: parsedStudent,
-              marks: rowMarks
-            });
-          }
-        });
-
-        const totalParsed = newItems.length + duplicateItems.length;
-        if (totalParsed === 0) {
-          alert('CSV फ़ाइल में कोई मान्य छात्र रिकॉर्ड नहीं मिला। (No valid student rows found in CSV file.)');
-          return;
         }
 
-        // If duplicate records exist, open the interactive confirmation modal
-        if (duplicateItems.length > 0) {
-          setCsvImportPrompt({
-            newItems,
-            duplicateItems,
-            totalRows: totalParsed
+        const rowMarks: Omit<ExamMark, 'id' | 'date' | 'schoolId'>[] = Array.from(rowMarksMap.values());
+
+        // Check if duplicate of existing student in store
+        const duplicateMatch = findDuplicateStudentMatch(parsedStudent);
+        if (duplicateMatch) {
+          const existing = duplicateMatch.existing;
+          const existingId = existing.id;
+
+          const mergedIncomingStudent: Student = {
+            ...existing,
+            ...parsedStudent,
+            id: existingId,
+            schoolId: existing.schoolId || parsedStudent.schoolId,
+            name: parsedStudent.name || existing.name,
+            grade: parsedStudent.grade || existing.grade,
+            srNo: parsedStudent.srNo || existing.srNo,
+            admissionNo: parsedStudent.admissionNo || existing.admissionNo,
+            fatherName: parsedStudent.fatherName || existing.fatherName,
+            motherName: parsedStudent.motherName || existing.motherName,
+            mobile: parsedStudent.mobile || existing.mobile,
+            address: parsedStudent.address || existing.address,
+            aadhar: parsedStudent.aadhar || existing.aadhar,
+            email: parsedStudent.email || existing.email,
+            gender: parsedStudent.gender || existing.gender,
+            dob: parsedStudent.dob || existing.dob,
+            rollNo: parsedStudent.rollNo || existing.rollNo,
+            academicSession: parsedStudent.academicSession || existing.academicSession,
+            stream: parsedStudent.stream || existing.stream,
+            previousClass: parsedStudent.previousClass || existing.previousClass,
+            feeBalance: parsedStudent.feeBalance !== undefined && !isNaN(parsedStudent.feeBalance) ? parsedStudent.feeBalance : existing.feeBalance,
+            subjects: parsedStudent.subjects && parsedStudent.subjects.length > 0 ? parsedStudent.subjects : (existing.subjects || getDefaultSubjectsForGrade(existing.grade)),
+            photoUrl: parsedStudent.photoUrl || (isValidPhotoUrl(existing.photoUrl) ? existing.photoUrl : (isValidPhotoUrl(existing.docStudentPhoto) ? existing.docStudentPhoto : '')) || '',
+            isDeleted: false
+          };
+
+          duplicateItems.push({
+            incomingStudent: mergedIncomingStudent,
+            existingStudent: existing,
+            marks: rowMarks.map(m => ({ ...m, studentId: existingId })),
+            matchReason: duplicateMatch.reason
           });
         } else {
-          // No duplicates found, direct import of all new items
-          const studentsToImport = newItems.map(item => item.student);
-          const marksToImport = newItems.flatMap(item => item.marks);
-
-          importStudents(studentsToImport);
-          if (marksToImport.length > 0) {
-            importMarks(marksToImport);
-          }
-          alert(`सफलतापूर्वक ${studentsToImport.length} नए छात्र और ${marksToImport.length} परीक्षा अंक (Marks) अपलोड किए गए। सभी परिणाम (Results) और रिपोर्ट कार्ड्स पर अपडेट हो चुके हैं।`);
+          newItems.push({
+            student: parsedStudent,
+            marks: rowMarks
+          });
         }
+      });
+
+      const totalParsed = newItems.length + duplicateItems.length;
+      if (totalParsed === 0) {
+        alert('CSV फ़ाइल में कोई मान्य छात्र रिकॉर्ड नहीं मिला। कृपया CSV फॉर्मेट जाँचें। (No valid student rows found in CSV file.)');
+        return;
+      }
+
+      // If duplicate records exist, open the interactive confirmation modal
+      if (duplicateItems.length > 0) {
+        setCsvImportPrompt({
+          newItems,
+          duplicateItems,
+          totalRows: totalParsed
+        });
+      } else {
+        // Direct import of all new items
+        const studentsToImport = newItems.map(item => item.student);
+        const marksToImport = newItems.flatMap(item => item.marks);
+
+        importStudents(studentsToImport);
+        if (marksToImport.length > 0) {
+          importMarks(marksToImport);
+        }
+        alert(`सफलतापूर्वक सभी ${studentsToImport.length} छात्र और ${marksToImport.length} परीक्षा अंक (Marks) अपलोड व सिंक हो चुके हैं।`);
       }
     };
     reader.readAsText(file);
@@ -1058,8 +1147,9 @@ export function AdminPanel() {
                   </div>
                 </div>
 
-                <div className="flex justify-between items-center text-xs text-slate-500 mb-2">
-                  <span>{studentSearch === '' && studentClassFilter === 'All' ? 'Showing latest 10 admissions. Use filters to search full database.' : `Found ${filteredDirectoryStudents.length} results`}</span>
+                <div className="flex justify-between items-center text-xs text-slate-500 mb-2 font-medium">
+                  <span>कुल पंजीकृत छात्र: <strong className="text-slate-800 font-bold">{filteredDirectoryStudents.length}</strong> {studentClassFilter !== 'All' ? `(${studentClassFilter})` : ''} {studentSearch ? `(खोज परिणाम: "${studentSearch}")` : ''}</span>
+                  <span className="text-slate-400 text-[11px]">शैक्षणिक सत्र: {activeAcademicSession}</span>
                 </div>
                 {/* Directory table */}
                 <div className="overflow-x-auto overflow-y-auto max-h-[500px] border rounded border-slate-200">

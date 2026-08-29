@@ -442,8 +442,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         section: historyEntry.section || s.section
       };
     }
-    // Otherwise, they were not admitted or promoted to this session, so do not show them
-    return null;
+    // If student's session is not explicitly separated or if no historical entry exists, keep them accessible
+    return s;
   }).filter(Boolean) as Student[];
   const filteredTeachers = isAdminPanel ? teachers : teachers.filter(t => t.schoolId === effectiveSchoolId);
   const filteredHomeworks = isAdminPanel ? homeworks : homeworks.filter(h => h.schoolId === effectiveSchoolId);
@@ -645,7 +645,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const studentObj = {
           ...s,
           schoolId: s.schoolId || targetSchoolId,
-          academicSession: s.academicSession || activeAcademicSession || '2025-26',
+          academicSession: s.academicSession || activeAcademicSession || '2026-27',
           isDeleted: false
         };
         return cleanFirestoreData(studentObj);

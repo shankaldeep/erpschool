@@ -512,3 +512,80 @@ export function getAllSubjectsForStudent(
 
   return sortSubjects(uniqueSubjects);
 }
+
+/**
+ * RFC 4180 compliant CSV parser that supports:
+ * - Quotes with commas and line breaks
+ * - Escaped double quotes ("")
+ * - Comma, tab, semicolon delimiters
+ * - UTF-8 BOM stripping
+ */
+export function parseCSVContent(rawText: string): string[][] {
+  if (!rawText) return [];
+  // Remove BOM if present
+  let text = rawText.replace(/^\uFEFF/, '').trim();
+  if (!text) return [];
+
+  // Detect delimiter: check first line for comma vs tab vs semicolon
+  const firstLine = text.split(/\r?\n/)[0] || '';
+  let delimiter = ',';
+  if ((firstLine.match(/\t/g) || []).length > (firstLine.match(/,/g) || []).length) {
+    delimiter = '\t';
+  } else if ((firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length) {
+    delimiter = ';';
+  }
+
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentVal = '';
+  let insideQuotes = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+
+    if (char === '"') {
+      if (insideQuotes && nextChar === '"') {
+        // Escaped double quote
+        currentVal += '"';
+        i++;
+      } else {
+        insideQuotes = !insideQuotes;
+      }
+    } else if (char === delimiter && !insideQuotes) {
+      currentRow.push(currentVal.trim());
+      currentVal = '';
+    } else if ((char === '\r' || char === '\n') && !insideQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      currentRow.push(currentVal.trim());
+      currentVal = '';
+      if (currentRow.some(col => col !== '')) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+    } else {
+      currentVal += char;
+    }
+  }
+
+  // Push last value & row
+  currentRow.push(currentVal.trim());
+  if (currentRow.some(col => col !== '')) {
+    rows.push(currentRow);
+  }
+
+  return rows;
+}
+
+/**
+ * Normalizes header string for robust multi-lingual comparison (English & Hindi)
+ */
+export function cleanHeaderKey(h: string): string {
+  if (!h) return '';
+  return h
+    .toLowerCase()
+    .replace(/[._\-/\s()[\]'":]/g, '')
+    .trim();
+}
