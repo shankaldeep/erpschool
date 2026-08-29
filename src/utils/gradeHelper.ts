@@ -90,6 +90,15 @@ export function normalizeGrade(gradeStr?: string | null): string {
 }
 
 /**
+ * Checks if a class is Pre-Primary / Kindergarten (Nursery, L.K.G, U.K.G, Playgroup, etc.)
+ */
+export function isPrePrimaryGrade(gradeStr?: string | null): boolean {
+  if (!gradeStr) return false;
+  const norm = normalizeGrade(gradeStr);
+  return norm === 'Nursery' || norm === 'L.K.G' || norm === 'U.K.G' || norm.toLowerCase().includes('nurs') || norm.toLowerCase().includes('lkg') || norm.toLowerCase().includes('ukg') || norm.toLowerCase().includes('play');
+}
+
+/**
  * Checks if two grade strings represent the same class
  */
 export function isSameGrade(g1?: string | null, g2?: string | null): boolean {
@@ -143,11 +152,12 @@ export function getDefaultSubjectsForGrade(gradeStr?: string | null, stream?: st
  * Normalizes subject names across various formats, abbreviations, and languages
  */
 export function normalizeSubject(subject?: string | null): string {
-  if (!subject) return 'General';
+  if (!subject) return '';
   const clean = subject.toString().trim();
-  if (!clean) return 'General';
+  if (!clean) return '';
 
   const subLower = clean.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!subLower) return clean;
 
   if (/^math/.test(subLower)) return 'Mathematics';
   if (/^hindi/.test(subLower)) return 'Hindi';
@@ -156,7 +166,7 @@ export function normalizeSubject(subject?: string | null): string {
   if (/^soc|^sst|^social/.test(subLower)) return 'Social Science';
   if (/^sans/.test(subLower)) return 'Sanskrit';
   if (/^draw|^art|^craft/.test(subLower)) return 'Drawing';
-  if (/^gk|^general|^moral/.test(subLower)) return 'G.K Moral';
+  if (/^gk|^moral|^genknow|^generalknowledge/.test(subLower)) return 'G.K Moral';
   if (/^reas/.test(subLower)) return 'Reasoning';
   if (/^pt|^physic/.test(subLower) && !subLower.includes('physics')) return 'P.T.';
   if (/^comp|^it$/.test(subLower)) return 'Computer Science';
@@ -181,40 +191,112 @@ export function normalizeSubject(subject?: string | null): string {
  */
 export function isSameSubject(s1?: string | null, s2?: string | null): boolean {
   if (!s1 || !s2) return false;
-  if (s1.trim().toLowerCase() === s2.trim().toLowerCase()) return true;
-  return normalizeSubject(s1).toLowerCase() === normalizeSubject(s2).toLowerCase();
+  const c1 = s1.trim();
+  const c2 = s2.trim();
+  if (!c1 || !c2) return false;
+  if (c1.toLowerCase() === c2.toLowerCase()) return true;
+  const n1 = normalizeSubject(c1);
+  const n2 = normalizeSubject(c2);
+  if (!n1 || !n2) return false;
+  return n1.toLowerCase() === n2.toLowerCase();
 }
+
+/**
+ * Checks if a subject typically has a practical component (e.g., Home Science, Science, Physics, Chemistry, Biology, Computer Science, Drawing, P.T., Geography, etc.)
+ */
+export function isPracticalSubject(subjectName?: string | null): boolean {
+  if (!subjectName) return false;
+  const sub = normalizeSubject(subjectName).toLowerCase();
+  const raw = subjectName.toLowerCase();
+  return (
+    sub.includes('home science') ||
+    raw.includes('home sci') ||
+    raw.includes('गृह विज्ञान') ||
+    sub === 'science' ||
+    raw.includes('विज्ञान') ||
+    sub.includes('computer') ||
+    raw.includes('कंप्यूटर') ||
+    sub.includes('physics') ||
+    sub.includes('chemistry') ||
+    sub.includes('biology') ||
+    sub.includes('drawing') ||
+    raw.includes('कला') ||
+    sub.includes('p.t.') ||
+    sub.includes('geography') ||
+    sub.includes('music')
+  );
+}
+
+/**
+ * Checks if a subject has practical considering the student's grade/class.
+ * Pre-primary (Nursery, LKG, UKG) NEVER has practical exams.
+ */
+export function isPracticalSubjectForGrade(subjectName?: string | null, gradeStr?: string | null): boolean {
+  if (!subjectName) return false;
+  if (isPrePrimaryGrade(gradeStr)) return false;
+  return isPracticalSubject(subjectName);
+}
+
+/**
+ * Returns suggested default practical max marks for a given subject & exam
+ */
+export function getDefaultPracticalMaxMarks(subjectName?: string | null, examType?: string): number {
+  if (!isPracticalSubject(subjectName)) return 0;
+  if (examType === 'Half-Yearly Test' || examType === 'Yearly Test') {
+    return 0; // Tests are usually 10 written/oral
+  }
+  // For Half-Yearly Exam & Yearly Exam, standard practical max is 30 (or 20/10)
+  return 30;
+}
+
+import { type ExamType } from '../types';
 
 /**
  * Robust parser for exam column headers in imported CSV files.
  * Handles formats like:
  * - "Hindi Half-Yearly Test Obtained", "Hindi Half-Yearly Test Max"
- * - "Hindi Half-Yearly Exam Obtained", "Hindi Yearly Exam Max"
+ * - "Home Science Practical Obtained", "Home Science Practical Max"
+ * - "Science Half-Yearly Practical", "Science Practical"
  * - "Hindi (Half-Yearly Test)", "Mathematics Yearly Exam"
  * - "Hindi_Marks", "Maths_Marks", "Science"
  */
-export function parseExamHeader(headerName: string): { subject: string; examType: 'Half-Yearly Test' | 'Half-Yearly Exam' | 'Yearly Test' | 'Yearly Exam'; isMax: boolean } | null {
+export function parseExamHeader(headerName: string): { 
+  subject: string; 
+  examType: ExamType; 
+  isMax: boolean;
+  isPractical: boolean;
+} | null {
   const clean = headerName.replace(/["']/g, '').trim();
   if (!clean) return null;
 
   const isMax = /\b(max|maximum|total|maxmarks|max_marks)\b/i.test(clean);
+  const isPractical = /\b(practical|prac|prct|प्रयोग|प्रायोगिक)\b/i.test(clean);
 
   // Check known exam types in order of specificity
-  let examType: 'Half-Yearly Test' | 'Half-Yearly Exam' | 'Yearly Test' | 'Yearly Exam' = 'Yearly Exam';
+  let examType: ExamType = 'Yearly Exam';
   let textWithoutExam = clean;
 
-  if (/half[-_\s]?yearly[-_\s]?test|half[-_\s]?year[-_\s]?test|hy[-_\s]?test|half[-_\s]?test/i.test(clean)) {
+  if (/half[-_\s]?yearly[-_\s]?practical|hy[-_\s]?practical|half[-_\s]?practical/i.test(clean)) {
+    examType = 'Half-Yearly Practical';
+    textWithoutExam = clean.replace(/half[-_\s]?yearly[-_\s]?practical|hy[-_\s]?practical|half[-_\s]?practical/gi, '');
+  } else if (/yearly[-_\s]?practical|annual[-_\s]?practical|final[-_\s]?practical|y[-_\s]?practical/i.test(clean)) {
+    examType = 'Yearly Practical';
+    textWithoutExam = clean.replace(/yearly[-_\s]?practical|annual[-_\s]?practical|final[-_\s]?practical|y[-_\s]?practical/gi, '');
+  } else if (/half[-_\s]?yearly[-_\s]?test|half[-_\s]?year[-_\s]?test|hy[-_\s]?test|half[-_\s]?test/i.test(clean)) {
     examType = 'Half-Yearly Test';
     textWithoutExam = clean.replace(/half[-_\s]?yearly[-_\s]?test|half[-_\s]?year[-_\s]?test|hy[-_\s]?test|half[-_\s]?test/gi, '');
   } else if (/half[-_\s]?yearly[-_\s]?exam|half[-_\s]?year[-_\s]?exam|hy[-_\s]?exam|half[-_\s]?yearly|half[-_\s]?year|hy/i.test(clean)) {
-    examType = 'Half-Yearly Exam';
+    examType = isPractical ? 'Half-Yearly Practical' : 'Half-Yearly Exam';
     textWithoutExam = clean.replace(/half[-_\s]?yearly[-_\s]?exam|half[-_\s]?year[-_\s]?exam|hy[-_\s]?exam|half[-_\s]?yearly|half[-_\s]?year|hy/gi, '');
   } else if (/yearly[-_\s]?test|annual[-_\s]?test|final[-_\s]?test|y[-_\s]?test/i.test(clean)) {
     examType = 'Yearly Test';
     textWithoutExam = clean.replace(/yearly[-_\s]?test|annual[-_\s]?test|final[-_\s]?test|y[-_\s]?test/gi, '');
   } else if (/yearly[-_\s]?exam|annual[-_\s]?exam|final[-_\s]?exam|annual|yearly|final/i.test(clean)) {
-    examType = 'Yearly Exam';
+    examType = isPractical ? 'Yearly Practical' : 'Yearly Exam';
     textWithoutExam = clean.replace(/yearly[-_\s]?exam|annual[-_\s]?exam|final[-_\s]?exam|annual|yearly|final/gi, '');
+  } else if (/\bpractical\b|\bप्रयोग\b|\bप्रायोगिक\b/i.test(clean)) {
+    examType = 'Practical Exam';
+    textWithoutExam = clean.replace(/\bpractical\b|\bप्रयोग\b|\bप्रायोगिक\b/gi, '');
   } else if (/\btest\b/i.test(clean)) {
     examType = 'Half-Yearly Test';
     textWithoutExam = clean.replace(/\btest\b/gi, '');
@@ -223,9 +305,9 @@ export function parseExamHeader(headerName: string): { subject: string; examType
     textWithoutExam = clean.replace(/\bexam\b/gi, '');
   }
 
-  // Strip trailing/leading keywords like "Obtained", "Max", "Marks", "Score", parentheses, underscores
+  // Strip trailing/leading keywords like "Obtained", "Max", "Marks", "Score", "Practical", parentheses, underscores
   let subjectText = textWithoutExam
-    .replace(/\b(obtained|obt|max|maximum|total|maxmarks|max_marks|marks|mark|score|points)\b/gi, '')
+    .replace(/\b(obtained|obt|max|maximum|total|maxmarks|max_marks|marks|mark|score|points|practical|prac|prct|प्रयोग|प्रायोगिक)\b/gi, '')
     .replace(/[()[\]_]/g, ' ')
     .trim();
 
@@ -245,5 +327,188 @@ export function parseExamHeader(headerName: string): { subject: string; examType
   }
 
   const subject = normalizeSubject(subjectText);
-  return { subject, examType, isMax };
+  return { subject, examType, isMax, isPractical };
+}
+
+/**
+ * Validates if a string is a valid image URL or base64 data URL.
+ * Prevents invalid numbers, undefined strings, or placeholder text from showing broken image icons.
+ */
+export function isValidPhotoUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (['undefined', 'null', 'n/a', 'none', '-', 'false', '0', '""', "''", 'undefined undefined'].includes(lower)) return false;
+  // If it's a numeric string (like "75", "100", "0"), it's clearly a mark or roll number, not a photo!
+  if (/^\d+(\.\d+)?$/.test(trimmed)) return false;
+
+  // Data URLs
+  if (trimmed.startsWith('data:image/')) {
+    return trimmed.includes(';base64,') && trimmed.length > 50;
+  }
+  // Blobs & absolute/relative URLs
+  if (trimmed.startsWith('blob:') || trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return true;
+  }
+  // Local paths with image extensions
+  if (/\.(jpg|jpeg|png|webp|gif|svg|bmp|avif)(\?.*)?$/i.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if a grade string represents Nursery, LKG, UKG, PG, or Kindergarten.
+ */
+export function isNurseryOrKg(gradeStr?: string | null): boolean {
+  if (!gradeStr) return false;
+  const norm = normalizeGrade(gradeStr).toLowerCase();
+  return norm.includes('nursery') || norm.includes('lkg') || norm.includes('ukg') || norm.includes('pg') || norm.includes('kindergarten') || norm.includes('n.c.');
+}
+
+const SUBJECT_ORDER_WEIGHTS: Record<string, number> = {
+  'hindi': 10,
+  'english': 20,
+  'mathematics': 30,
+  'maths': 30,
+  'science': 40,
+  'physics': 41,
+  'chemistry': 42,
+  'biology': 43,
+  'social science': 50,
+  'sst': 50,
+  'social studies': 50,
+  'history': 51,
+  'geography': 52,
+  'political science': 53,
+  'civics': 53,
+  'economics': 54,
+  'sanskrit': 60,
+  'urdu': 65,
+  'drawing': 70,
+  'art': 70,
+  'art & craft': 70,
+  'rhymes': 75,
+  'g.k moral': 80,
+  'gk': 80,
+  'g.k.': 80,
+  'general knowledge': 80,
+  'moral science': 82,
+  'reasoning': 85,
+  'computer': 90,
+  'computer science': 90,
+  'i.t.': 90,
+  'information technology': 90,
+  'home science': 95,
+  'accountancy': 100,
+  'business studies': 105,
+  'p.t.': 999,
+  'pt': 999,
+  'physical education': 999,
+  'physical & health education': 999,
+  'games': 999,
+};
+
+export function getSubjectWeight(subject: string): number {
+  if (!subject) return 200;
+  const clean = subject.toString().trim().toLowerCase();
+  const norm = normalizeSubject(clean).toLowerCase();
+  for (const [key, weight] of Object.entries(SUBJECT_ORDER_WEIGHTS)) {
+    if (norm === key || clean === key || norm.includes(key) || clean.includes(key)) {
+      return weight;
+    }
+  }
+  return 200;
+}
+
+export function sortSubjects(subjects: string[]): string[] {
+  return [...subjects].sort((a, b) => {
+    const wA = getSubjectWeight(a);
+    const wB = getSubjectWeight(b);
+    if (wA !== wB) return wA - wB;
+    return a.localeCompare(b);
+  });
+}
+
+/**
+ * Returns ALL comprehensive subjects for a student report card, ensuring no curriculum subject,
+ * student assigned subject, or recorded mark subject is ever missed or hidden.
+ */
+export function getAllSubjectsForStudent(
+  student?: { grade?: string | null; stream?: string | null; subjects?: string[] | null; optionalSubject?: string | null; id?: string } | null,
+  allStudents: Array<{ id?: string; grade?: string | null; stream?: string | null; subjects?: string[] | null; optionalSubject?: string | null }> = [],
+  allMarks: Array<{ studentId?: string; subject?: string | null }> = []
+): string[] {
+  if (!student) {
+    return ['Hindi', 'English', 'Mathematics', 'Science', 'Social Science', 'Drawing', 'G.K Moral', 'P.T.'];
+  }
+
+  const rawList: string[] = [];
+
+  // 1. Default subjects for this grade/stream
+  const defaultSubs = getDefaultSubjectsForGrade(student.grade, (student as any).stream);
+  defaultSubs.forEach(s => {
+    if (s && s.trim()) rawList.push(s.trim());
+  });
+
+  // 2. Student's own assigned subjects
+  if (student.subjects && Array.isArray(student.subjects)) {
+    student.subjects.forEach(s => {
+      if (s && s.trim()) rawList.push(s.trim());
+    });
+  }
+  if (student.optionalSubject && student.optionalSubject.trim()) {
+    rawList.push(student.optionalSubject.trim());
+  }
+
+  // 3. Subjects from student's own recorded marks
+  if (student.id) {
+    allMarks
+      .filter(m => m.studentId === student.id && m.subject)
+      .forEach(m => {
+        if (m.subject && m.subject.trim()) rawList.push(m.subject.trim());
+      });
+  }
+
+  // 4. Subjects from all classmates in the same grade
+  const classmates = allStudents.filter(s => isSameGrade(s.grade, student.grade));
+  classmates.forEach(c => {
+    if (c.subjects && Array.isArray(c.subjects)) {
+      c.subjects.forEach(s => {
+        if (s && s.trim()) rawList.push(s.trim());
+      });
+    }
+    if (c.optionalSubject && c.optionalSubject.trim()) {
+      rawList.push(c.optionalSubject.trim());
+    }
+  });
+
+  // 5. Subjects from all marks recorded in this grade
+  const classmateIds = new Set(classmates.map(c => c.id).filter(Boolean));
+  if (classmateIds.size > 0) {
+    allMarks
+      .filter(m => m.studentId && classmateIds.has(m.studentId) && m.subject)
+      .forEach(m => {
+        if (m.subject && m.subject.trim()) rawList.push(m.subject.trim());
+      });
+  }
+
+  // Deduplicate while preserving recognized clean names
+  const uniqueSubjects: string[] = [];
+  rawList.forEach(item => {
+    const trimmed = item.trim();
+    if (!trimmed) return;
+    const exists = uniqueSubjects.some(existing => isSameSubject(existing, trimmed));
+    if (!exists) {
+      const normalized = normalizeSubject(trimmed);
+      uniqueSubjects.push(normalized || trimmed);
+    }
+  });
+
+  if (uniqueSubjects.length === 0) {
+    return defaultSubs.length > 0 ? defaultSubs : ['Hindi', 'English', 'Mathematics', 'Science', 'Social Science', 'Drawing', 'G.K Moral', 'P.T.'];
+  }
+
+  return sortSubjects(uniqueSubjects);
 }

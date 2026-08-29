@@ -175,7 +175,7 @@ export interface Student extends User {
   hasPreviousClass?: boolean;
   previousClass?: string;
   photoUrl?: string; // used interchangeably with docStudentPhoto/photoUrl
-  reportCardTemplate?: 'classic_portrait' | 'landscape_new' | 'royal_official_portrait' | 'master_academic_grid';
+  reportCardTemplate?: 'classic_portrait' | 'paper_i_ii_portrait' | 'landscape_new' | 'paper_i_ii_landscape' | 'nursery_kg' | 'nursery_kg_landscape';
 }
 
 export interface Teacher extends User {
@@ -200,7 +200,17 @@ export interface Homework {
   date: string;
 }
 
-export type ExamType = 'Half-Yearly Test' | 'Half-Yearly Exam' | 'Yearly Test' | 'Yearly Exam';
+export type ExamType = 
+  | 'Half-Yearly Test' 
+  | 'Half-Yearly Exam' 
+  | 'Half-Yearly Practical'
+  | 'Half-Yearly Oral'
+  | 'Yearly Test' 
+  | 'Yearly Exam' 
+  | 'Yearly Practical'
+  | 'Yearly Oral'
+  | 'Oral Exam'
+  | 'Practical Exam';
 
 export interface ExamMark {
   id: string;
@@ -209,8 +219,14 @@ export interface ExamMark {
   teacherId: string;
   examType: ExamType;
   subject: string;
-  marksObtained: number;
-  maxMarks: number;
+  marksObtained: number; // Theory / Written / Paper I marks obtained
+  maxMarks: number; // Theory / Written / Paper I max marks
+  paper2Marks?: number; // Paper II marks obtained (e.g. for Hindi II, English II, Math II, etc.)
+  paper2MaxMarks?: number; // Paper II maximum marks (e.g. 35, 45, 50, etc.)
+  oralMarks?: number; // Oral marks obtained (for languages, junior classes, or separate viva)
+  oralMaxMarks?: number; // Oral maximum marks
+  practicalMarks?: number; // Practical / Experimental marks obtained (e.g. for Home Science, Science, Computer, Drawing, etc.)
+  practicalMaxMarks?: number; // Practical maximum marks (e.g. 30, 20, 10, etc.)
   date: string;
 }
 

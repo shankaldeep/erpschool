@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import type { Student, Teacher, User, ExamMark } from '../types';
 import { StudentReportCard } from '../components/StudentReportCard';
-import { normalizeGrade, isSameGrade, getDefaultSubjectsForGrade, parseExamHeader, normalizeSubject, isSameSubject } from '../utils/gradeHelper';
+import { normalizeGrade, isSameGrade, getDefaultSubjectsForGrade, parseExamHeader, normalizeSubject, isSameSubject, isValidPhotoUrl } from '../utils/gradeHelper';
 
 // ERP modular components import
 import { StudentRegistration } from '../components/erp/StudentRegistration';
@@ -166,7 +166,7 @@ export function AdminPanel() {
     marks.forEach(m => examCombos.add(`${m.subject}:::${m.examType}`));
     const dynamicExamCols = Array.from(examCombos).sort();
 
-    const baseHeader = ['Student_ID', 'SR_No', 'Admission_No', 'Name', 'Gender', 'Father', 'Mother', 'DOB', 'Mobile', 'Aadhar', 'Email', 'Address', 'Class', 'RollNo', 'AcademicSession', 'PreviousClass', 'Stream', 'Password', 'FeeBalance', 'Photo_URL'];
+    const baseHeader = ['SR_No', 'Admission_No', 'Name', 'Gender', 'Father', 'Mother', 'DOB', 'Mobile', 'Aadhar', 'Email', 'Address', 'Class', 'RollNo', 'AcademicSession', 'PreviousClass', 'Stream', 'Password', 'FeeBalance', 'Photo_URL'];
     
     const dynamicHeaders = dynamicExamCols.flatMap(col => {
       const [subject, examType] = col.split(':::');
@@ -175,12 +175,35 @@ export function AdminPanel() {
 
     const header = [...baseHeader, ...dynamicHeaders];
     
+    const escapeCsv = (val: any) => {
+      if (val === undefined || val === null) return '""';
+      const str = String(val);
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+
     const rows = students.map(s => {
       const fullAddress = s.address || [s.presentVillageMohalla, s.presentPostOffice, s.presentDistrict, s.presentState, s.presentPinCode].filter(Boolean).join(', ') || '';
-      const photoField = s.docStudentPhoto ? `"${s.docStudentPhoto.replace(/"/g, '""')}"` : '';
+      const photoVal = isValidPhotoUrl(s.photoUrl) ? s.photoUrl : (isValidPhotoUrl(s.docStudentPhoto) ? s.docStudentPhoto : '');
       const sBase = [
-        s.id, s.srNo || '', s.admissionNo || '', s.name, s.gender||'', s.fatherName||'', s.motherName||'', s.dob||'', s.mobile||'', s.aadhar||'', s.email||'', `"${fullAddress}"`,
-        s.grade, s.rollNo, s.academicSession||'', s.previousClass||'', s.stream||'', s.password||'', s.feeBalance, photoField
+        escapeCsv(s.srNo || ''),
+        escapeCsv(s.admissionNo || ''),
+        escapeCsv(s.name),
+        escapeCsv(s.gender || ''),
+        escapeCsv(s.fatherName || ''),
+        escapeCsv(s.motherName || ''),
+        escapeCsv(s.dob || ''),
+        escapeCsv(s.mobile || ''),
+        escapeCsv(s.aadhar || ''),
+        escapeCsv(s.email || ''),
+        escapeCsv(fullAddress),
+        escapeCsv(s.grade),
+        escapeCsv(s.rollNo),
+        escapeCsv(s.academicSession || ''),
+        escapeCsv(s.previousClass || ''),
+        escapeCsv(s.stream || ''),
+        escapeCsv(s.password || ''),
+        escapeCsv(s.feeBalance !== undefined && !isNaN(s.feeBalance) ? s.feeBalance : 0),
+        escapeCsv(photoVal || '')
       ];
 
       const sMarks = dynamicExamCols.flatMap(col => {
@@ -201,22 +224,10 @@ export function AdminPanel() {
     link.click();
   };
 
-  // Helper to detect if an incoming student is a duplicate / existing student
+  // Helper to detect if an incoming student is a duplicate of any existing student
   const findDuplicateStudentMatch = (incoming: Partial<Student>): { existing: Student; reason: string } | null => {
     for (const existing of students) {
       if (existing.isDeleted) continue;
-
-      // 0. Match by exact Student ID (if provided in CSV export)
-      if (
-        incoming.id &&
-        existing.id &&
-        incoming.id.trim() === existing.id.trim()
-      ) {
-        return {
-          existing,
-          reason: `Student ID "${existing.id}" (${existing.name}, ${existing.grade})`
-        };
-      }
 
       // 1. Match by SR Number (if non-empty and not dummy)
       if (
@@ -342,7 +353,6 @@ export function AdminPanel() {
           const cols = parseLine(line);
           if (cols.length < 2) return;
 
-          const rawId = getCol(cols, ['studentid', 'student_id', 'id'], -1);
           const rawName = getCol(cols, ['name', 'studentname', 'student_name', 'fullname', 'candidate_name'], 2) || (cols.length > 0 ? cols[0] : '');
           if (!rawName) return;
 
@@ -356,9 +366,8 @@ export function AdminPanel() {
           const rawRoll = getCol(cols, ['rollno', 'roll_no', 'roll', 'examrollno', 'rollnumber'], 12) || String(lineIdx + 1);
           const rawSr = getCol(cols, ['srno', 'sr_no', 'sr', 'serialno', 'srnumber'], 0) || `SR-${1000 + lineIdx + 1}`;
           const rawAdm = getCol(cols, ['admissionno', 'admission_no', 'admno', 'adm_no', 'regno', 'registrationno'], 1) || `ADM-${5000 + lineIdx + 1}`;
-          const rawPhoto = getCol(cols, ['photo', 'photourl', 'photo_url', 'studentphoto', 'student_photo', 'docstudentphoto', 'image', 'avatar', 'picture'], 18);
 
-          const tempStudentId = rawId && rawId.trim() !== '' ? rawId.trim() : `s_${Date.now()}_${lineIdx}_${Math.random().toString().slice(2, 6)}`;
+          const tempStudentId = `s_${Date.now()}_${lineIdx}_${Math.random().toString().slice(2, 6)}`;
 
           const parsedStudent: Student = {
             role: 'STUDENT',
@@ -382,53 +391,64 @@ export function AdminPanel() {
             stream: rawStream as any,
             password: getCol(cols, ['password', 'pwd'], 16) || 'password123',
             feeBalance: Number(getCol(cols, ['feebalance', 'fee_balance', 'dues', 'balance'], 17) || 0),
-            docStudentPhoto: rawPhoto && rawPhoto.trim() !== '' ? rawPhoto.trim() : undefined,
+            photoUrl: (() => {
+              const rawP = getCol(cols, ['photourl', 'photo', 'photolink', 'image', 'picture', 'docstudentphoto', 'studentphoto']);
+              if (isValidPhotoUrl(rawP)) return rawP.trim();
+              if (cols[18] && isValidPhotoUrl(cols[18])) return cols[18].trim();
+              return '';
+            })(),
             subjects: getDefaultSubjectsForGrade(normalizedGrade, rawStream),
             isDeleted: false
           };
 
           // Extract all exam marks for this student row
-          const rowMarks: Omit<ExamMark, 'id' | 'date' | 'schoolId'>[] = [];
+          const rowMarksMap = new Map<string, Omit<ExamMark, 'id' | 'date' | 'schoolId'>>();
+          
           for (let i = 0; i < cols.length; i++) {
             const colNameHeader = headerLine[i];
             if (!colNameHeader) continue;
             const parsedExam = parseExamHeader(colNameHeader);
             if (parsedExam && !parsedExam.isMax) {
-              const marksObtained = Number(cols[i]);
-              if (!isNaN(marksObtained) && cols[i] !== '') {
-                // Find if there is an explicit Max column
-                let maxMarks = 100;
-                // Check if next column is the matching Max
-                if (i + 1 < cols.length && headerLine[i + 1]) {
-                  const nextExam = parseExamHeader(headerLine[i + 1]);
-                  if (nextExam && nextExam.isMax && isSameSubject(nextExam.subject, parsedExam.subject)) {
-                    const parsedMax = Number(cols[i + 1]);
-                    if (!isNaN(parsedMax) && parsedMax > 0) {
-                      maxMarks = parsedMax;
-                    }
-                  }
-                }
-                
-                // Fallback default based on exam type
-                if (maxMarks === 100) {
-                  if (parsedExam.examType === 'Half-Yearly Test' || parsedExam.examType === 'Yearly Test') {
-                    maxMarks = 10;
-                  } else if (parsedExam.examType === 'Half-Yearly Exam' || parsedExam.examType === 'Yearly Exam') {
-                    maxMarks = 90;
-                  }
-                }
-
-                rowMarks.push({
+              const val = Number(cols[i]);
+              if (!isNaN(val) && cols[i] !== '') {
+                const markKey = `${parsedExam.examType}:::${parsedExam.subject}`;
+                const existingMark: Omit<ExamMark, 'id' | 'date' | 'schoolId'> = rowMarksMap.get(markKey) || {
                   studentId: tempStudentId,
                   teacherId: currentUser?.id || 'admin',
                   examType: parsedExam.examType,
                   subject: parsedExam.subject,
-                  marksObtained,
-                  maxMarks
-                });
+                  marksObtained: 0,
+                  maxMarks: (parsedExam.examType === 'Half-Yearly Test' || parsedExam.examType === 'Yearly Test') ? 10 : 90,
+                };
+
+                // Find if there is an explicit Max column
+                let explicitMax: number | undefined;
+                if (i + 1 < cols.length && headerLine[i + 1]) {
+                  const nextExam = parseExamHeader(headerLine[i + 1]);
+                  if (nextExam && nextExam.isMax && isSameSubject(nextExam.subject, parsedExam.subject) && nextExam.isPractical === parsedExam.isPractical) {
+                    const parsedMax = Number(cols[i + 1]);
+                    if (!isNaN(parsedMax) && parsedMax > 0) {
+                      explicitMax = parsedMax;
+                    }
+                  }
+                }
+
+                if (parsedExam.isPractical) {
+                  existingMark.practicalMarks = val;
+                  existingMark.practicalMaxMarks = explicitMax !== undefined ? explicitMax : 30;
+                } else {
+                  existingMark.marksObtained = val;
+                  if (explicitMax !== undefined) {
+                    existingMark.maxMarks = explicitMax;
+                  }
+                }
+
+                rowMarksMap.set(markKey, existingMark);
               }
             }
           }
+
+          const rowMarks: Omit<ExamMark, 'id' | 'date' | 'schoolId'>[] = Array.from(rowMarksMap.values());
 
           // Check if this student matches any existing record
           const duplicateMatch = findDuplicateStudentMatch(parsedStudent);
@@ -436,41 +456,36 @@ export function AdminPanel() {
             const existing = duplicateMatch.existing;
             const existingId = existing.id;
             
-            // Smart field merge: keep existing value if incoming is empty/default
-            const mergedStudent: Student = {
+            // Smart merge: preserve existing fields if incoming CSV fields are empty/blank
+            const mergedIncomingStudent: Student = {
               ...existing,
               ...parsedStudent,
-              id: existingId, // Preserve original student ID
-              srNo: parsedStudent.srNo && !parsedStudent.srNo.startsWith('SR-') ? parsedStudent.srNo : (existing.srNo || parsedStudent.srNo),
-              admissionNo: parsedStudent.admissionNo && !parsedStudent.admissionNo.startsWith('ADM-') ? parsedStudent.admissionNo : (existing.admissionNo || parsedStudent.admissionNo),
+              id: existingId,
+              schoolId: existing.schoolId || parsedStudent.schoolId,
               name: parsedStudent.name || existing.name,
+              grade: parsedStudent.grade || existing.grade,
+              srNo: parsedStudent.srNo || existing.srNo,
+              admissionNo: parsedStudent.admissionNo || existing.admissionNo,
               fatherName: parsedStudent.fatherName || existing.fatherName,
               motherName: parsedStudent.motherName || existing.motherName,
-              dob: parsedStudent.dob || existing.dob,
               mobile: parsedStudent.mobile || existing.mobile,
+              address: parsedStudent.address || existing.address,
               aadhar: parsedStudent.aadhar || existing.aadhar,
               email: parsedStudent.email || existing.email,
-              address: parsedStudent.address || existing.address,
-              grade: parsedStudent.grade || existing.grade,
+              gender: parsedStudent.gender || existing.gender,
+              dob: parsedStudent.dob || existing.dob,
               rollNo: parsedStudent.rollNo || existing.rollNo,
               academicSession: parsedStudent.academicSession || existing.academicSession,
               stream: parsedStudent.stream || existing.stream,
-              subjects: parsedStudent.subjects && parsedStudent.subjects.length > 0 ? parsedStudent.subjects : (existing.subjects || getDefaultSubjectsForGrade(existing.grade)),
+              previousClass: parsedStudent.previousClass || existing.previousClass,
               feeBalance: parsedStudent.feeBalance !== undefined && !isNaN(parsedStudent.feeBalance) ? parsedStudent.feeBalance : existing.feeBalance,
-              docStudentPhoto: (parsedStudent.docStudentPhoto && parsedStudent.docStudentPhoto.trim() !== '') ? parsedStudent.docStudentPhoto : existing.docStudentPhoto,
-              docStudentSig: existing.docStudentSig,
-              docBirthCert: existing.docBirthCert,
-              docAadharCard: existing.docAadharCard,
-              docCasteCert: existing.docCasteCert,
-              docIncomeCert: existing.docIncomeCert,
-              docTransferCert: existing.docTransferCert,
-              docPreviousMarksheet: existing.docPreviousMarksheet,
-              docResidenceCert: existing.docResidenceCert,
-              docBankPassbook: existing.docBankPassbook
+              subjects: parsedStudent.subjects && parsedStudent.subjects.length > 0 ? parsedStudent.subjects : (existing.subjects || getDefaultSubjectsForGrade(existing.grade)),
+              photoUrl: parsedStudent.photoUrl || (isValidPhotoUrl(existing.photoUrl) ? existing.photoUrl : (isValidPhotoUrl(existing.docStudentPhoto) ? existing.docStudentPhoto : '')) || '',
+              isDeleted: false
             };
 
             duplicateItems.push({
-              incomingStudent: mergedStudent,
+              incomingStudent: mergedIncomingStudent,
               existingStudent: existing,
               marks: rowMarks.map(m => ({ ...m, studentId: existingId })),
               matchReason: duplicateMatch.reason
@@ -1067,8 +1082,13 @@ export function AdminPanel() {
                       ) : filteredDirectoryStudents.map(st => (
                         <tr key={st.id} className="hover:bg-slate-50">
                           <td className="px-4 py-2">
-                            {st.docStudentPhoto || st.photoUrl ? (
-                              <img src={st.docStudentPhoto || st.photoUrl} alt="Pic" className="w-[32px] h-[32px] rounded-lg object-cover border" />
+                            {isValidPhotoUrl(st.docStudentPhoto || st.photoUrl) ? (
+                              <img 
+                                src={(isValidPhotoUrl(st.docStudentPhoto) ? st.docStudentPhoto : st.photoUrl) || ''} 
+                                alt="" 
+                                className="w-[32px] h-[32px] rounded-lg object-cover border" 
+                                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                              />
                             ) : (
                               <div className="w-[32px] h-[32px] rounded-lg bg-slate-100 flex items-center justify-center text-[8px] text-slate-400">Empty</div>
                             )}
@@ -1477,14 +1497,14 @@ export function AdminPanel() {
               <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-1.5">
                 <p className="font-bold flex items-center gap-1.5 text-amber-950">
                   <HelpCircle className="w-4 h-4 text-amber-700" />
-                  क्या आप इन रिकॉर्ड्स को मौजूदा डेटा के साथ अपडेट करना चाहते हैं?
+                  क्या आप डुप्लीकेट रिकॉर्ड को भी अपलोड / अपडेट करना चाहते हैं?
                 </p>
                 <ul className="list-disc list-inside space-y-1 text-slate-700 ml-1">
                   <li>
-                    <strong className="text-emerald-700">केवल नए रिकॉर्ड (New Only):</strong> केवल {csvImportPrompt.newItems.length} नए छात्र और उनके अंक अपलोड होंगे। पहले से मौजूद {csvImportPrompt.duplicateItems.length} रिकॉर्ड्स में कोई बदलाव नहीं होगा।
+                    <strong className="text-emerald-700">केवल नए रिकॉर्ड (New Only):</strong> केवल {csvImportPrompt.newItems.length} नए छात्र और उनके अंक अपलोड होंगे। डुप्लीकेट रिकॉर्ड छोड़ दिए जाएंगे।
                   </li>
                   <li>
-                    <strong className="text-indigo-700">मौजूदा रिकॉर्ड अपडेट करें (Smart Update):</strong> कोई डुप्लीकेट नया रिकॉर्ड नहीं बनेगा। मौजूदा {csvImportPrompt.duplicateItems.length} छात्रों का डेटा व परीक्षा अंक (Marks) अपडेट हो जाएंगे और नए छात्र भी जुड़ जाएंगे।
+                    <strong className="text-blue-700">डुप्लीकेट भी अनुमति दें (Allow Duplicates):</strong> नए छात्र जोड़े जाएंगे और डुप्लीकेट छात्रों का डेटा व परीक्षा अंक (Marks) अपडेट हो जाएंगे।
                   </li>
                 </ul>
               </div>
@@ -1506,7 +1526,7 @@ export function AdminPanel() {
                   className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-4 py-2 flex items-center justify-center gap-1.5 shadow-xs"
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  केवल नए छात्र जोड़ें ({csvImportPrompt.newItems.length} New Only)
+                  केवल नए रिकॉर्ड अपलोड करें ({csvImportPrompt.newItems.length} New Only)
                 </Button>
 
                 <Button
@@ -1515,7 +1535,7 @@ export function AdminPanel() {
                   className="w-full sm:w-auto bg-indigo-650 hover:bg-indigo-750 text-white font-bold text-xs px-4 py-2 flex items-center justify-center gap-1.5 shadow-xs"
                 >
                   <CheckCheck className="w-4 h-4" />
-                  मौजूदा रिकॉर्ड अपडेट करें (Smart Update - No Duplicates)
+                  हाँ, डुप्लीकेट भी अनुमति दें और अपडेट करें ({csvImportPrompt.totalRows} All)
                 </Button>
               </div>
             </div>
