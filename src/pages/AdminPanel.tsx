@@ -379,6 +379,31 @@ export function AdminPanel() {
       const newItems: NewImportItem[] = [];
       const duplicateItems: DuplicateImportItem[] = [];
 
+      // Track per-class roll numbers so each class (Class 1, Class 2, etc.) starts independently from Roll 1
+      const classRollMap: Record<string, number> = {};
+
+      const getClassNextRoll = (grade: string, session: string) => {
+        const key = `${normalizeGrade(grade)}_${session}`;
+        if (classRollMap[key] === undefined) {
+          // Initialize from existing students in store for this school, class and session
+          let maxExistingRoll = 0;
+          students.forEach(s => {
+            if (!s.isDeleted && 
+                (!effectiveSchool || !s.schoolId || s.schoolId === effectiveSchool) &&
+                isSameGrade(s.grade, grade) && 
+                (!s.academicSession || s.academicSession === session)) {
+              const num = parseInt(String(s.rollNo).trim(), 10);
+              if (!isNaN(num) && num > maxExistingRoll) {
+                maxExistingRoll = num;
+              }
+            }
+          });
+          classRollMap[key] = maxExistingRoll;
+        }
+        classRollMap[key] += 1;
+        return String(classRollMap[key]);
+      };
+
       dataRows.forEach((row, rowIdx) => {
         if (!row || row.length === 0 || row.every(c => !c.trim())) return;
 
@@ -427,12 +452,17 @@ export function AdminPanel() {
           }
         }
 
-        // Resolve Roll No
+        // Resolve Roll No (Class-specific numbering: Class 1 has 1..50, Class 2 starts fresh at 1)
         let rawRoll = '';
-        if (rollIdx !== -1 && row[rollIdx]) {
+        if (rollIdx !== -1 && row[rollIdx] && row[rollIdx].trim()) {
           rawRoll = row[rollIdx].trim();
+          const parsedRoll = parseInt(rawRoll, 10);
+          const key = `${normalizedGrade}_${studentSession}`;
+          if (!isNaN(parsedRoll)) {
+            classRollMap[key] = Math.max(classRollMap[key] || 0, parsedRoll);
+          }
         } else {
-          rawRoll = String(rowIdx + 1);
+          rawRoll = getClassNextRoll(normalizedGrade, studentSession);
         }
 
         // Resolve SR No and Admission No

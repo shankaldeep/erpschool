@@ -3,6 +3,7 @@ import { useStore } from '../../store';
 import { Card, Button, Label, Input } from '../UI';
 import { type Student } from '../../types';
 import { Sparkles, Save, User as UserIcon, Shield, MapPin, BookOpen, FileText, Check } from 'lucide-react';
+import { isSameGrade, normalizeGrade } from '../../utils/gradeHelper';
 
 const CLASSES = ['Nursery', 'L.K.G', 'U.K.G', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12'];
 const SECTIONS = ['A', 'B', 'C', 'D'];
@@ -93,14 +94,50 @@ export function StudentRegistration({ onSuccess, onCancel, studentToEdit }: Stud
     return !!localStorage.getItem('sch_student_reg_draft');
   });
 
-  // Calculate next Roll Number & Admission/SR Number
-  const getNextNumbers = (grade: string) => {
-    const classStudents = students.filter(s => s.grade === grade);
-    const nextRoll = classStudents.length + 1;
+  // Calculate next Roll Number & Admission/SR Number strictly per Class & Session
+  const getNextNumbers = (grade: string, session?: string) => {
+    const sessionToUse = session || form.academicSession || '2026-27';
+    const effectiveSchoolId = currentSchool?.id;
+
+    // Filter active students specifically in THIS grade and academic session
+    const classStudents = students.filter(s => 
+      !s.isDeleted && 
+      (!effectiveSchoolId || !s.schoolId || s.schoolId === effectiveSchoolId) &&
+      (isSameGrade(s.grade, grade) || s.grade === grade) &&
+      (!sessionToUse || !s.academicSession || s.academicSession === sessionToUse)
+    );
+
+    // Calculate highest roll number in THIS class
+    let maxRoll = 0;
+    classStudents.forEach(s => {
+      if (s.rollNo) {
+        const num = parseInt(String(s.rollNo).trim(), 10);
+        if (!isNaN(num) && num > maxRoll) {
+          maxRoll = num;
+        }
+      }
+    });
+
+    // If no students in this class yet, roll starts from 1!
+    const nextRoll = maxRoll > 0 ? (maxRoll + 1) : (classStudents.length + 1);
     
-    // Use school config if available, else default to old logic
-    const nextSR = currentSchool?.nextSrNo || (1000 + students.length + 1);
-    const nextAdm = currentSchool?.nextAdmissionNo || (5000 + students.length + 1);
+    // School level Admission and SR numbers (sequential for the entire school)
+    const totalSchoolStudents = students.filter(s => !s.isDeleted && (!effectiveSchoolId || !s.schoolId || s.schoolId === effectiveSchoolId));
+    let maxSr = 0;
+    let maxAdm = 0;
+    totalSchoolStudents.forEach(s => {
+      if (s.srNo) {
+        const num = parseInt(String(s.srNo).replace(/\D/g, ''), 10);
+        if (!isNaN(num) && num > maxSr) maxSr = num;
+      }
+      if (s.admissionNo) {
+        const num = parseInt(String(s.admissionNo).replace(/\D/g, ''), 10);
+        if (!isNaN(num) && num > maxAdm) maxAdm = num;
+      }
+    });
+
+    const nextSR = currentSchool?.nextSrNo || (maxSr > 0 ? maxSr + 1 : 1000 + totalSchoolStudents.length + 1);
+    const nextAdm = currentSchool?.nextAdmissionNo || (maxAdm > 0 ? maxAdm + 1 : 5000 + totalSchoolStudents.length + 1);
     
     return { roll: String(nextRoll), sr: String(nextSR), adm: String(nextAdm) };
   };
@@ -298,9 +335,9 @@ export function StudentRegistration({ onSuccess, onCancel, studentToEdit }: Stud
     }
   };
 
-  const autofillNumbers = (grade: string) => {
+  const autofillNumbers = (grade: string, session?: string) => {
     if (!grade) return;
-    const num = getNextNumbers(grade);
+    const num = getNextNumbers(grade, session);
     const code = Math.floor(1000 + Math.random() * 9000);
     setForm(prev => ({
       ...prev,
@@ -581,12 +618,12 @@ export function StudentRegistration({ onSuccess, onCancel, studentToEdit }: Stud
                     }
                     return { ...prev, grade: selGrade, stream: updatedStream, subjects: updatedSubjects };
                   });
-                  autofillNumbers(selGrade);
+                  autofillNumbers(selGrade, form.academicSession);
                 }}>
                   <option value="">Select...</option>
                   {CLASSES.map(c => <option key={c} value={c}>{c}</option>)}
                 </Input>
-                <p className="text-[10px] text-slate-400 mt-1">Selecting autofills Roll No, SR No & credentials.</p>
+                <p className="text-[10px] text-slate-400 mt-1">कक्षा चुनने पर इस कक्षा का अगला रोल नंबर (Roll No 1 से), SR No स्वतः भरता है।</p>
               </div>
               <div><Label>Admission No</Label><Input value={form.admissionNo || ''} onChange={e => setForm({...form, admissionNo: e.target.value})} /></div>
               <div><Label>Scholar Register (SR) No <span className="text-slate-400 font-normal">(UP Board Core Key)</span></Label><Input value={form.srNo || ''} onChange={e => setForm({...form, srNo: e.target.value})} /></div>
@@ -598,7 +635,17 @@ export function StudentRegistration({ onSuccess, onCancel, studentToEdit }: Stud
               <div><Label>Admission Date</Label><Input type="date" value={form.admissionDate || ''} onChange={e => setForm({...form, admissionDate: e.target.value})} /></div>
               <div>
                 <Label>Academic Session</Label>
-                <Input as="select" value={form.academicSession || '2026-27'} onChange={e => setForm({...form, academicSession: e.target.value})}>
+                <Input as="select" value={form.academicSession || '2026-27'} onChange={e => {
+                  const newSession = e.target.value;
+                  setForm(prev => {
+                    const nextNum = prev.grade ? getNextNumbers(prev.grade, newSession) : null;
+                    return {
+                      ...prev,
+                      academicSession: newSession,
+                      rollNo: nextNum ? nextNum.roll : prev.rollNo
+                    };
+                  });
+                }}>
                   {allowedSessions.map(sess => <option key={sess} value={sess}>{sess}</option>)}
                 </Input>
               </div>

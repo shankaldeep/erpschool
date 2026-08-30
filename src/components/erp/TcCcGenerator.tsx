@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useStore } from '../../store';
 import { Card, Button, Label, Input } from '../UI';
 import { type Student } from '../../types';
-import { Printer, Search, FileText } from 'lucide-react';
+import { Printer, Search, FileText, Calendar, Plus, Trash2, CheckCircle2, RefreshCw, Sliders, CheckSquare, Square, Clock, Sparkles, AlertCircle, Layers } from 'lucide-react';
 
 export function TcCcGenerator() {
   const { students, schools, currentUser } = useStore();
@@ -142,13 +142,19 @@ export function TcCcGenerator() {
     sign: string;
   }[]>([]);
 
-  // Timeline Generator states
+  // Timeline Generator states & modes
+  const [timelineMode, setTimelineMode] = useState<'quick' | 'classes' | 'tools'>('quick');
+  const [classesFilter, setClassesFilter] = useState<'all' | 'active'>('all');
+  const [expandedClassIdx, setExpandedClassIdx] = useState<number | null>(null);
+
   const [timelineStartClass, setTimelineStartClass] = useState('Class I');
   const [timelineEndClass, setTimelineEndClass] = useState('Class V');
   const [timelineStartDate, setTimelineStartDate] = useState('02-07-2020');
   const [timelineEndDate, setTimelineEndDate] = useState('20-05-2025');
   const [timelineStartYear, setTimelineStartYear] = useState('2020');
   const [timelineRemovalCause, setTimelineRemovalCause] = useState('Completed Class 5 Higher Secondary and going elsewhere');
+  const [timelineAdmMonthDay, setTimelineAdmMonthDay] = useState('01-07');
+  const [timelinePromMonthDay, setTimelinePromMonthDay] = useState('20-05');
 
   // Automatically adjust orientation when layout category changes
   React.useEffect(() => {
@@ -287,37 +293,39 @@ export function TcCcGenerator() {
     }
   }, [dob]);
 
-  const generateTimelineData = () => {
-    const classesList = ['Nursery', 'L.K.G', 'U.K.G', 'Class I', 'Class II', 'Class III', 'Class IV', 'Class V', 'Class VI', 'Class VII', 'Class VIII', 'Class IX', 'Class X', 'Class XI', 'Class XII'];
+  const classesList = ['Nursery', 'L.K.G', 'U.K.G', 'Class I', 'Class II', 'Class III', 'Class IV', 'Class V', 'Class VI', 'Class VII', 'Class VIII', 'Class IX', 'Class X', 'Class XI', 'Class XII'];
+
+  const generateTimelineData = (appendMode: boolean = false) => {
     const startIdx = classesList.indexOf(timelineStartClass);
     const endIdx = classesList.indexOf(timelineEndClass);
     
     if (startIdx === -1 || endIdx === -1 || startIdx > endIdx) {
-      alert('Please ensure start class is less than or equal to end class!');
+      alert('कृपया सुनिश्चित करें कि प्रारंभिक कक्षा (Start Class), अंतिम कक्षा (End Class) से पहले या समान हो!');
       return;
     }
     
     const startYearNum = parseInt(timelineStartYear, 10) || 2020;
     
     const newRows = classesList.map((cls, idx) => {
+      const existingRow = gridRows[idx];
       if (idx >= startIdx && idx <= endIdx) {
         const diff = idx - startIdx;
         const classStartYear = startYearNum + diff;
         const classEndYear = classStartYear + 1;
         const yearStr = `${classStartYear}-${String(classEndYear).slice(2)}`;
         
-        let admDate = `01-07-${classStartYear}`;
-        let promDate = `20-05-${classEndYear}`;
+        let admDate = `${timelineAdmMonthDay}-${classStartYear}`;
+        let promDate = `${timelinePromMonthDay}-${classEndYear}`;
         let remDate = '';
         let cause = '';
         
         if (idx === startIdx) {
-          admDate = timelineStartDate;
+          admDate = timelineStartDate || `${timelineAdmMonthDay}-${classStartYear}`;
         }
         
         if (idx === endIdx) {
           promDate = '';
-          remDate = timelineEndDate;
+          remDate = timelineEndDate || `${timelinePromMonthDay}-${classEndYear}`;
           cause = timelineRemovalCause;
         }
         
@@ -329,11 +337,14 @@ export function TcCcGenerator() {
           remDate,
           cause,
           year: yearStr,
-          conduct: 'Uttam / उत्तम',
-          work: 'Sreshtha / श्रेष्ठ',
-          sign: ''
+          conduct: existingRow?.conduct || 'Uttam / उत्तम',
+          work: existingRow?.work || 'Sreshtha / श्रेष्ठ',
+          sign: existingRow?.sign || ''
         };
       } else {
+        if (appendMode && existingRow && (existingRow.admDate || existingRow.promDate || existingRow.remDate || existingRow.year)) {
+          return existingRow;
+        }
         return {
           id: String(idx),
           classLabel: cls,
@@ -350,6 +361,125 @@ export function TcCcGenerator() {
     });
     
     setGridRows(newRows);
+  };
+
+  const updateClassField = (index: number, field: string, value: string) => {
+    setGridRows(prev => {
+      const updated = [...prev];
+      if (updated[index]) {
+        updated[index] = { ...updated[index], [field]: value };
+      }
+      return updated;
+    });
+  };
+
+  const autoFillSingleClass = (index: number) => {
+    const cls = classesList[index];
+    let estimatedYear = 2020 + index;
+    const prevActiveIndex = gridRows.slice(0, index).reverse().findIndex(r => r.admDate || r.year);
+    if (prevActiveIndex !== -1) {
+      const actualPrevIdx = index - 1 - prevActiveIndex;
+      const prevYearStr = gridRows[actualPrevIdx]?.year;
+      const match = prevYearStr?.match(/^(\d{4})/);
+      if (match) {
+        estimatedYear = parseInt(match[1], 10) + (index - actualPrevIdx);
+      }
+    }
+    const endYear = estimatedYear + 1;
+
+    setGridRows(prev => {
+      const updated = [...prev];
+      updated[index] = {
+        id: String(index),
+        classLabel: cls,
+        admDate: `01-07-${estimatedYear}`,
+        promDate: `20-05-${endYear}`,
+        remDate: '',
+        cause: '',
+        year: `${estimatedYear}-${String(endYear).slice(2)}`,
+        conduct: 'Uttam / उत्तम',
+        work: 'Sreshtha / श्रेष्ठ',
+        sign: ''
+      };
+      return updated;
+    });
+  };
+
+  const clearSingleClass = (index: number) => {
+    setGridRows(prev => {
+      const updated = [...prev];
+      if (updated[index]) {
+        updated[index] = {
+          ...updated[index],
+          admDate: '',
+          promDate: '',
+          remDate: '',
+          cause: '',
+          year: '',
+          conduct: '',
+          work: '',
+          sign: ''
+        };
+      }
+      return updated;
+    });
+  };
+
+  const autoCalculateSequentialYears = () => {
+    const activeIndices = gridRows.map((r, i) => (r.admDate || r.promDate || r.remDate || r.year ? i : -1)).filter(i => i !== -1);
+    if (activeIndices.length === 0) {
+      alert('कोई सक्रिय कक्षा नहीं मिली! पहले कम से कम एक कक्षा सक्रिय करें।');
+      return;
+    }
+    const baseYear = parseInt(timelineStartYear, 10) || 2020;
+    setGridRows(prev => {
+      return prev.map((row, idx) => {
+        const orderPos = activeIndices.indexOf(idx);
+        if (orderPos !== -1) {
+          const classStartYear = baseYear + orderPos;
+          const classEndYear = classStartYear + 1;
+          return {
+            ...row,
+            year: `${classStartYear}-${String(classEndYear).slice(2)}`,
+            admDate: row.admDate || `01-07-${classStartYear}`,
+            promDate: (orderPos === activeIndices.length - 1 && row.remDate) ? '' : (row.promDate || `20-05-${classEndYear}`),
+            conduct: row.conduct || 'Uttam / उत्तम',
+            work: row.work || 'Sreshtha / श्रेष्ठ'
+          };
+        }
+        return row;
+      });
+    });
+  };
+
+  const setStandardConductAndWork = () => {
+    setGridRows(prev => prev.map(r => {
+      if (r.admDate || r.promDate || r.remDate || r.year) {
+        return {
+          ...r,
+          conduct: 'Uttam / उत्तम',
+          work: 'Sreshtha / श्रेष्ठ'
+        };
+      }
+      return r;
+    }));
+  };
+
+  const clearAllClasses = () => {
+    if (window.confirm('क्या आप सभी कक्षाओं की तिथियां व डेटा हटाना चाहते हैं?')) {
+      setGridRows(classesList.map((cls, idx) => ({
+        id: String(idx),
+        classLabel: cls,
+        admDate: '',
+        promDate: '',
+        remDate: '',
+        cause: '',
+        year: '',
+        conduct: '',
+        work: '',
+        sign: ''
+      })));
+    }
   };
 
   const filteredStudents = students.filter(s => 
@@ -673,73 +803,395 @@ export function TcCcGenerator() {
         )}
 
         {certType === 'SR_TC' && (selectedStudent || selectedStudentId === 'manual') && (
-          <div className="space-y-2 p-2 border rounded bg-amber-50/50 text-xs">
-            <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block border-b pb-1">Study Timeline Generator (सत्र फीडर)</span>
-            <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2.5 p-2.5 border border-amber-200 rounded-md bg-amber-50/70 text-xs shadow-sm">
+            <div className="flex items-center justify-between border-b border-amber-200/80 pb-1.5">
               <div>
-                <Label>Start Class (से)</Label>
-                <Input as="select" value={timelineStartClass} onChange={e => setTimelineStartClass(e.target.value)}>
-                  <option value="Nursery">Nursery</option>
-                  <option value="L.K.G">L.K.G</option>
-                  <option value="U.K.G">U.K.G</option>
-                  <option value="Class I">Class I</option>
-                  <option value="Class II">Class II</option>
-                  <option value="Class III">Class III</option>
-                  <option value="Class IV">Class IV</option>
-                  <option value="Class V">Class V</option>
-                  <option value="Class VI">Class VI</option>
-                  <option value="Class VII">Class VII</option>
-                  <option value="Class VIII">Class VIII</option>
-                  <option value="Class IX">Class IX</option>
-                  <option value="Class X">Class X</option>
-                  <option value="Class XI">Class XI</option>
-                  <option value="Class XII">Class XII</option>
-                </Input>
+                <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-amber-700" />
+                  <span>सत्र व कक्षा समय-सारणी प्रबंधक</span>
+                </span>
+                <span className="text-[9px] text-amber-700 block font-normal">
+                  प्रत्येक कक्षा की अलग-अलग प्रवेश, कक्षोन्नति व निष्कासन तिथियां
+                </span>
               </div>
-              <div>
-                <Label>End Class (तक)</Label>
-                <Input as="select" value={timelineEndClass} onChange={e => setTimelineEndClass(e.target.value)}>
-                  <option value="Nursery">Nursery</option>
-                  <option value="L.K.G">L.K.G</option>
-                  <option value="U.K.G">U.K.G</option>
-                  <option value="Class I">Class I</option>
-                  <option value="Class II">Class II</option>
-                  <option value="Class III">Class III</option>
-                  <option value="Class IV">Class IV</option>
-                  <option value="Class V">Class V</option>
-                  <option value="Class VI">Class VI</option>
-                  <option value="Class VII">Class VII</option>
-                  <option value="Class VIII">Class VIII</option>
-                  <option value="Class IX">Class IX</option>
-                  <option value="Class X">Class X</option>
-                  <option value="Class XI">Class XI</option>
-                  <option value="Class XII">Class XII</option>
-                </Input>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-200 text-amber-900 border border-amber-300">
+                {gridRows.filter(r => r.admDate || r.promDate || r.remDate || r.year).length} कक्षा सक्रिय
+              </span>
+            </div>
+
+            {/* Mode Switcher */}
+            <div className="grid grid-cols-3 gap-1 bg-amber-100/70 p-0.5 rounded border border-amber-200 text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => setTimelineMode('quick')}
+                className={`py-1 rounded transition-colors flex items-center justify-center gap-1 ${
+                  timelineMode === 'quick' ? 'bg-amber-700 text-white shadow-xs' : 'text-amber-900 hover:bg-amber-200/60'
+                }`}
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>त्वरित रेंज</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTimelineMode('classes')}
+                className={`py-1 rounded transition-colors flex items-center justify-center gap-1 ${
+                  timelineMode === 'classes' ? 'bg-amber-700 text-white shadow-xs' : 'text-amber-900 hover:bg-amber-200/60'
+                }`}
+              >
+                <Sliders className="w-3 h-3" />
+                <span>कक्षा-वार तिथि</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTimelineMode('tools')}
+                className={`py-1 rounded transition-colors flex items-center justify-center gap-1 ${
+                  timelineMode === 'tools' ? 'bg-amber-700 text-white shadow-xs' : 'text-amber-900 hover:bg-amber-200/60'
+                }`}
+              >
+                <Layers className="w-3 h-3" />
+                <span>टूल्स</span>
+              </button>
+            </div>
+
+            {/* Tab 1: Quick Range Feeder */}
+            {timelineMode === 'quick' && (
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[10px]">प्रारंभिक कक्षा (Start)</Label>
+                    <Input as="select" value={timelineStartClass} onChange={e => setTimelineStartClass(e.target.value)}>
+                      {classesList.map(cls => (
+                        <option key={cls} value={cls}>{cls}</option>
+                      ))}
+                    </Input>
+                  </div>
+                  <div>
+                    <Label className="text-[10px]">अंतिम कक्षा (End)</Label>
+                    <Input as="select" value={timelineEndClass} onChange={e => setTimelineEndClass(e.target.value)}>
+                      {classesList.map(cls => (
+                        <option key={cls} value={cls}>{cls}</option>
+                      ))}
+                    </Input>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[10px]">प्रवेश तिथि (Start Class)</Label>
+                    <Input value={timelineStartDate} onChange={e => setTimelineStartDate(e.target.value)} placeholder="02-07-2020" />
+                  </div>
+                  <div>
+                    <Label className="text-[10px]">निष्कासन तिथि (End Class)</Label>
+                    <Input value={timelineEndDate} onChange={e => setTimelineEndDate(e.target.value)} placeholder="20-05-2025" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[10px]">प्रारंभिक वर्ष (Start Year)</Label>
+                    <Input type="number" value={timelineStartYear} onChange={e => setTimelineStartYear(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label className="text-[10px]">सत्र प्रवेश/उन्नति माह-दिन</Label>
+                    <div className="flex items-center gap-1">
+                      <input 
+                        type="text" 
+                        value={timelineAdmMonthDay} 
+                        onChange={e => setTimelineAdmMonthDay(e.target.value)} 
+                        className="w-1/2 text-center text-xs bg-white border border-slate-200 rounded py-1" 
+                        title="मध्यवर्ती कक्षाओं की प्रवेश तिथि (e.g. 01-07)" 
+                        placeholder="01-07"
+                      />
+                      <input 
+                        type="text" 
+                        value={timelinePromMonthDay} 
+                        onChange={e => setTimelinePromMonthDay(e.target.value)} 
+                        className="w-1/2 text-center text-xs bg-white border border-slate-200 rounded py-1" 
+                        title="मध्यवर्ती कक्षाओं की कक्षोन्नति तिथि (e.g. 20-05)" 
+                        placeholder="20-05"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <Label className="text-[10px]">निष्कासन का कारण (Removal Cause)</Label>
+                  <Input value={timelineRemovalCause} onChange={e => setTimelineRemovalCause(e.target.value)} />
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => setTimelineRemovalCause('उच्च शिक्षा हेतु अन्यत्र जाने के कारण')}
+                      className="text-[9px] bg-amber-100 hover:bg-amber-200 text-amber-800 px-1 py-0.5 rounded"
+                    >
+                      + उच्च शिक्षा हेतु
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTimelineRemovalCause('अभिभावक के स्थानान्तरण के कारण')}
+                      className="text-[9px] bg-amber-100 hover:bg-amber-200 text-amber-800 px-1 py-0.5 rounded"
+                    >
+                      + स्थानान्तरण
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTimelineRemovalCause('स्वेच्छा से नाम पृथक कराया')}
+                      className="text-[9px] bg-amber-100 hover:bg-amber-200 text-amber-800 px-1 py-0.5 rounded"
+                    >
+                      + स्वेच्छा से
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <Button 
+                    type="button" 
+                    onClick={() => generateTimelineData(false)} 
+                    className="w-full bg-amber-700 hover:bg-amber-800 text-white font-bold py-1.5 px-2 text-[11px] rounded shadow-sm flex items-center justify-center gap-1"
+                    title="पूरी समय-सारणी को इस रेंज से दोबारा सेट करें"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>⚡ नई सारणी भरें</span>
+                  </Button>
+                  <Button 
+                    type="button" 
+                    onClick={() => generateTimelineData(true)} 
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-1.5 px-2 text-[11px] rounded shadow-sm flex items-center justify-center gap-1"
+                    title="अन्य मौजूदा कक्षाओं को हटाए बिना यह रेंज जोड़ें (गैप/दोबारा प्रवेश हेतु उपयोगी)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>➕ यह रेंज जोड़ें</span>
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div>
-              <Label>Admission Date (प्रवेश तिथि)</Label>
-              <Input value={timelineStartDate} onChange={e => setTimelineStartDate(e.target.value)} placeholder="DD-MM-YYYY" />
-            </div>
-            <div>
-              <Label>Removal Date (निष्कासन तिथि)</Label>
-              <Input value={timelineEndDate} onChange={e => setTimelineEndDate(e.target.value)} placeholder="DD-MM-YYYY" />
-            </div>
-            <div>
-              <Label>Start Year (प्रारंभिक वर्ष)</Label>
-              <Input type="number" value={timelineStartYear} onChange={e => setTimelineStartYear(e.target.value)} />
-            </div>
-            <div>
-              <Label>Removal Cause (निष्कासन कारण)</Label>
-              <Input value={timelineRemovalCause} onChange={e => setTimelineRemovalCause(e.target.value)} />
-            </div>
-            <Button 
-              type="button" 
-              onClick={generateTimelineData} 
-              className="w-full mt-2 bg-amber-600 hover:bg-amber-700 text-white font-bold py-1 px-2 text-xs rounded shadow flex items-center justify-center gap-1.5"
-            >
-              <span>⚡ Auto-fill Class Grid (सत्र स्वतः भरें)</span>
-            </Button>
+            )}
+
+            {/* Tab 2: Per-Class Detailed Individual Date & Session Editor */}
+            {timelineMode === 'classes' && (
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center justify-between pb-1 border-b border-amber-200 text-[10px]">
+                  <span className="font-bold text-amber-900">प्रत्येक कक्षा का विवरण:</span>
+                  <div className="flex items-center gap-1 bg-white p-0.5 rounded border border-amber-200">
+                    <button
+                      type="button"
+                      onClick={() => setClassesFilter('all')}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                        classesFilter === 'all' ? 'bg-amber-700 text-white' : 'text-slate-600'
+                      }`}
+                    >
+                      सभी (15)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setClassesFilter('active')}
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                        classesFilter === 'active' ? 'bg-amber-700 text-white' : 'text-slate-600'
+                      }`}
+                    >
+                      सक्रिय ({gridRows.filter(r => r.admDate || r.promDate || r.remDate || r.year).length})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="max-h-[300px] overflow-y-auto space-y-1.5 pr-0.5">
+                  {gridRows.map((row, idx) => {
+                    const isActive = Boolean(row.admDate || row.promDate || row.remDate || row.year);
+                    if (classesFilter === 'active' && !isActive) return null;
+                    const isExpanded = expandedClassIdx === idx;
+
+                    return (
+                      <div
+                        key={row.id}
+                        className={`border rounded p-1.5 transition-all text-[10px] ${
+                          isActive ? 'bg-white border-amber-300 shadow-xs' : 'bg-slate-50/70 border-slate-200 opacity-80'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isActive) {
+                                  clearSingleClass(idx);
+                                } else {
+                                  autoFillSingleClass(idx);
+                                }
+                              }}
+                              className="text-slate-500 hover:text-amber-700"
+                              title={isActive ? 'कक्षा हटाएं' : 'कक्षा सक्रिय करें'}
+                            >
+                              {isActive ? (
+                                <CheckSquare className="w-3.5 h-3.5 text-amber-700" />
+                              ) : (
+                                <Square className="w-3.5 h-3.5 text-slate-400" />
+                              )}
+                            </button>
+                            <span className="font-bold text-slate-800 text-[11px]">{row.classLabel}</span>
+                            {isActive && (
+                              <span className="text-[9px] bg-amber-100 text-amber-800 font-mono px-1 rounded">
+                                {row.year || 'No Year'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedClassIdx(isExpanded ? null : idx)}
+                              className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200"
+                            >
+                              {isExpanded ? 'संक्षिप्त' : 'विस्तार'}
+                            </button>
+                            {isActive && (
+                              <button
+                                type="button"
+                                onClick={() => clearSingleClass(idx)}
+                                className="p-0.5 text-red-500 hover:text-red-700"
+                                title="खाली करें"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Summary line if collapsed */}
+                        {!isExpanded && isActive && (
+                          <div className="mt-1 pt-1 border-t border-slate-100 text-[9px] text-slate-500 flex flex-wrap gap-x-2 font-mono">
+                            {row.admDate && <span>प्रवेश: <strong className="text-slate-700">{row.admDate}</strong></span>}
+                            {row.promDate && <span>उन्नति: <strong className="text-slate-700">{row.promDate}</strong></span>}
+                            {row.remDate && <span className="text-red-700">निष्कासन: <strong>{row.remDate}</strong></span>}
+                          </div>
+                        )}
+
+                        {/* Expanded details */}
+                        {isExpanded && (
+                          <div className="mt-2 pt-1.5 border-t border-slate-200 space-y-1.5">
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">प्रवेश तिथि (Admission)</label>
+                                <input
+                                  type="text"
+                                  value={row.admDate}
+                                  onChange={e => updateClassField(idx, 'admDate', e.target.value)}
+                                  placeholder="01-07-2021"
+                                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-800"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">कक्षोन्नति तिथि (Promotion)</label>
+                                <input
+                                  type="text"
+                                  value={row.promDate}
+                                  onChange={e => updateClassField(idx, 'promDate', e.target.value)}
+                                  placeholder="20-05-2022"
+                                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold text-blue-800"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">निष्कासन तिथि (Removal)</label>
+                                <input
+                                  type="text"
+                                  value={row.remDate}
+                                  onChange={e => updateClassField(idx, 'remDate', e.target.value)}
+                                  placeholder="छोड़ने की तिथि (यदि लागू हो)"
+                                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold text-red-800"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">सत्र / वर्ष (Year)</label>
+                                <input
+                                  type="text"
+                                  value={row.year}
+                                  onChange={e => updateClassField(idx, 'year', e.target.value)}
+                                  placeholder="2021-22"
+                                  className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold text-slate-800"
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="text-[9px] text-slate-600 block">निष्कासन कारण (Cause of Removal)</label>
+                              <input
+                                type="text"
+                                value={row.cause}
+                                onChange={e => updateClassField(idx, 'cause', e.target.value)}
+                                placeholder="कारण (जैसे: कक्षा उत्तीर्ण कर अन्यत्र जाने पर)"
+                                className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-800"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1 pt-0.5">
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">आचरण</label>
+                                <input
+                                  type="text"
+                                  value={row.conduct}
+                                  onChange={e => updateClassField(idx, 'conduct', e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded px-1 py-0.5 text-[9px]"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] text-slate-600 block">कार्य</label>
+                                <input
+                                  type="text"
+                                  value={row.work}
+                                  onChange={e => updateClassField(idx, 'work', e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded px-1 py-0.5 text-[9px]"
+                                />
+                              </div>
+                              <div className="flex items-end">
+                                <button
+                                  type="button"
+                                  onClick={() => autoFillSingleClass(idx)}
+                                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-1 px-1 rounded text-[9px]"
+                                >
+                                  मानक भरें
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3: Bulk Tools */}
+            {timelineMode === 'tools' && (
+              <div className="space-y-2 pt-1 text-[10px]">
+                <div className="p-2 bg-white rounded border border-amber-200 space-y-1.5">
+                  <span className="font-bold text-amber-900 block">⚡ त्वरित बैच टूल्स:</span>
+                  <button
+                    type="button"
+                    onClick={autoCalculateSequentialYears}
+                    className="w-full text-left p-1.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-950 font-medium flex items-center justify-between border border-amber-300"
+                  >
+                    <span>📅 सक्रिय कक्षाओं के सत्र (Years) क्रमिक बनाएं</span>
+                    <RefreshCw className="w-3 h-3 text-amber-800" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={setStandardConductAndWork}
+                    className="w-full text-left p-1.5 rounded bg-indigo-50 hover:bg-indigo-100 text-indigo-950 font-medium flex items-center justify-between border border-indigo-200"
+                  >
+                    <span>✨ मानक आचरण (Uttam) व कार्य (Sreshtha) भरें</span>
+                    <Sparkles className="w-3 h-3 text-indigo-700" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearAllClasses}
+                    className="w-full text-left p-1.5 rounded bg-red-50 hover:bg-red-100 text-red-900 font-medium flex items-center justify-between border border-red-200"
+                  >
+                    <span>🧹 सभी कक्षाओं का डेटा हटाएं (Clear All)</span>
+                    <Trash2 className="w-3 h-3 text-red-700" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
